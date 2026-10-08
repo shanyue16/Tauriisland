@@ -1,0 +1,608 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file MusicSettingsSection.tsx
+ * @description 设置页面 - 音乐设置区块
+ * @author 鸡哥
+ */
+
+import { useEffect, useState } from 'react';
+import type { ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { MusicSettingsPageKey } from '../../utils/settingsConfig';
+import useIslandStore from '../../../../../../../store/slices';
+import { SettingsPageNavigation, SettingsPageNavigationToggle } from '../SettingsPageNavigation';
+import { PlayerIcon } from '../../../../../../../utils/SvgIcon/player-icon';
+
+interface MusicSourceOption {
+  value: string;
+  label: string;
+}
+
+/** 播放器进程名关键词图标映射表 */
+const PLAYER_ICON_MAP: Array<{ keywords: string[]; icon: string }> = [
+  { keywords: ['qqmusic', 'qq音乐'], icon: PlayerIcon.QQMUSIC }, // i18n-exclude
+  { keywords: ['netease', 'cloudmusic', '网易云'], icon: PlayerIcon.NETEASE }, // i18n-exclude
+  { keywords: ['kugou', '酷狗'], icon: PlayerIcon.KUGOU }, // i18n-exclude
+  { keywords: ['sodamusic', '汽水'], icon: PlayerIcon.SODAMUSIC }, // i18n-exclude
+  { keywords: ['apple', 'applemusic'], icon: PlayerIcon.APPLE_MUSIC },
+  { keywords: ['spotify'], icon: PlayerIcon.SPOTIFY },
+];
+
+/** 根据进程名匹配播放器图标 */
+function getPlayerIcon(name: string): string | null {
+  const lower = name.toLowerCase();
+  const match = PLAYER_ICON_MAP.find((entry) =>
+    entry.keywords.some((kw) => lower.includes(kw)),
+  );
+  return match?.icon ?? null;
+}
+
+interface MusicConfigMessage {
+  type: 'error' | 'success';
+  text: string;
+}
+
+interface MusicSettingsSectionProps {
+  currentMusicSettingsPageLabel: string;
+  musicSettingsPage: MusicSettingsPageKey;
+  whitelist: string[];
+  setWhitelist: (list: string[]) => void;
+  whitelistInputError: string;
+  setWhitelistInputError: (value: string) => void;
+  whitelistDraft: string;
+  setWhitelistDraft: (value: string) => void;
+  handleAddWhitelist: () => void;
+  handleDetectSourceAppId: () => Promise<void>;
+  detectingSourceAppId: boolean;
+  detectedSources: Array<{ sourceAppId: string; isPlaying: boolean; hasTitle: boolean; thumbnail: string | null }>;
+  lyricsSourceOptions: MusicSourceOption[];
+  lyricsSource: string;
+  setLyricsSource: (value: string) => void;
+  lyricsKaraoke: boolean;
+  setLyricsKaraoke: (value: boolean) => void;
+  lyricsEnabled: boolean;
+  setLyricsEnabled: (value: boolean) => void;
+  lyricsTranslationEnabled: boolean;
+  setLyricsTranslationEnabled: (value: boolean) => void;
+  lyricsClock: boolean;
+  setLyricsClock: (value: boolean) => void;
+  lyricsCalibrateEnabled: boolean;
+  setLyricsCalibrateEnabled: (value: boolean) => void;
+  lyricsCalibrateDelay: number;
+  setLyricsCalibrateDelay: (value: number) => void;
+  musicSmtcUnsubscribeInput: string;
+  setMusicSmtcUnsubscribeInput: (value: string) => void;
+  musicSmtcNeverUnsubscribe: boolean;
+  setMusicSmtcNeverUnsubscribe: (value: boolean) => void;
+  saveMusicSmtcUnsubscribeConfig: () => Promise<void>;
+  setMusicSmtcConfigMessage: (message: MusicConfigMessage | null) => void;
+  musicSmtcConfigMessage: MusicConfigMessage | null;
+  musicSettingsPages: MusicSettingsPageKey[];
+  musicSettingsPageLabels: Record<MusicSettingsPageKey, string>;
+  setMusicSettingsPage: (page: MusicSettingsPageKey) => void;
+}
+
+/**
+ * 渲染音乐设置区块
+ * @param props - 音乐设置区域所需参数
+ * @returns 音乐设置区域
+ */
+export function MusicSettingsSection(props: MusicSettingsSectionProps): ReactElement {
+  const { t } = useTranslation();
+  const [pageNavigationExpanded, setPageNavigationExpanded] = useState(false);
+  const lyricsSourceOptionKeyMap: Record<string, string> = {
+    auto: 'settings.music.lyrics.sourceOptions.auto',
+    'netease-only': 'settings.music.lyrics.sourceOptions.neteaseOnly',
+    'qqmusic-only': 'settings.music.lyrics.sourceOptions.qqmusicOnly',
+    'kugou-only': 'settings.music.lyrics.sourceOptions.kugouOnly',
+    'sodamusic-only': 'settings.music.lyrics.sourceOptions.sodamusicOnly',
+    'applemusic-only': 'settings.music.lyrics.sourceOptions.applemusicOnly',
+    'spotify-only': 'settings.music.lyrics.sourceOptions.spotifyOnly',
+    'moekoe-only': 'settings.music.lyrics.sourceOptions.moekoeOnly',
+    'lrclib-only': 'settings.music.lyrics.sourceOptions.lrclibOnly',
+  };
+  const {
+    currentMusicSettingsPageLabel,
+    musicSettingsPage,
+    whitelist,
+    setWhitelist,
+    whitelistInputError,
+    setWhitelistInputError,
+    whitelistDraft,
+    setWhitelistDraft,
+    handleAddWhitelist,
+    handleDetectSourceAppId,
+    detectingSourceAppId,
+    detectedSources,
+    lyricsSourceOptions,
+    lyricsSource,
+    setLyricsSource,
+    lyricsKaraoke,
+    setLyricsKaraoke,
+    lyricsEnabled,
+    setLyricsEnabled,
+    lyricsTranslationEnabled,
+    setLyricsTranslationEnabled,
+    lyricsClock,
+    setLyricsClock,
+    lyricsCalibrateEnabled,
+    setLyricsCalibrateEnabled,
+    lyricsCalibrateDelay,
+    setLyricsCalibrateDelay,
+    musicSmtcUnsubscribeInput,
+    setMusicSmtcUnsubscribeInput,
+    musicSmtcNeverUnsubscribe,
+    setMusicSmtcNeverUnsubscribe,
+    saveMusicSmtcUnsubscribeConfig,
+    setMusicSmtcConfigMessage,
+    musicSmtcConfigMessage,
+    musicSettingsPages,
+    musicSettingsPageLabels,
+    setMusicSettingsPage,
+  } = props;
+
+  const { setMusicProvidersLogin } = useIslandStore();
+  const [qishuiLoggedIn, setQishuiLoggedIn] = useState(false);
+  const [qishuiAuthLoading, setQishuiAuthLoading] = useState(true);
+  const [qishuiMode, setQishuiMode] = useState<'guest' | 'logged-in'>('guest');
+
+  useEffect(() => {
+    Promise.all([
+      window.api.musicProviderAuthStatus('qishui'),
+      window.api.musicProviderModeGet(),
+    ])
+      .then(([status, mode]) => {
+        setQishuiLoggedIn(status.loggedIn);
+        setQishuiMode(mode);
+      })
+      .catch(() => {
+        setQishuiLoggedIn(false);
+        setQishuiMode('guest');
+      })
+      .finally(() => setQishuiAuthLoading(false));
+  }, []);
+
+  const handleQishuiModeChange = (mode: 'guest' | 'logged-in'): void => {
+    setQishuiMode(mode);
+    window.api.musicProviderModeSet(mode).catch(() => {});
+  };
+
+  const handleQishuiAuthAction = (): void => {
+    if (!qishuiLoggedIn) {
+      setMusicProvidersLogin('qishui');
+      return;
+    }
+
+    setQishuiAuthLoading(true);
+    window.api.musicProviderAuthClear('qishui')
+      .then(() => setQishuiLoggedIn(false))
+      .finally(() => setQishuiAuthLoading(false));
+  };
+
+  return (
+    <div className="max-expand-settings-section">
+      <div className="max-expand-settings-title settings-app-title-line">
+        <span>{t('settings.labels.music', { defaultValue: '歌曲设置' })}</span>
+        <span className="settings-app-title-sub">- {currentMusicSettingsPageLabel}</span>
+        <SettingsPageNavigationToggle
+          expanded={pageNavigationExpanded}
+          label={t(pageNavigationExpanded ? 'settings.navigation.collapse' : 'settings.navigation.expand')}
+          onToggle={() => setPageNavigationExpanded((current) => !current)}
+        />
+      </div>
+
+      <div className="settings-app-pages-layout settings-music-pages-layout">
+        <div className="settings-app-page-main">
+          {musicSettingsPage === 'whitelist' && (
+            <div className="settings-cards">
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.whitelist.title', { defaultValue: '播放器白名单' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.whitelist.hint', { defaultValue: '只有白名单内的播放器才会触发歌曲信息获取' })}</div>
+                </div>
+                <div className="settings-whitelist-list">
+                  {whitelist.length === 0 ? (
+                    <span className="settings-hide-selected-empty">{t('settings.music.whitelist.empty', { defaultValue: '暂无已加入的播放器' })}</span>
+                  ) : whitelist.map((item: string, idx: number) => {
+                    const playerIcon = getPlayerIcon(item);
+                    return (
+                    <div className="settings-whitelist-item" key={item}>
+                      {playerIcon && <img className="settings-whitelist-icon" src={playerIcon} alt="" />}
+                      <span className="settings-whitelist-name">{item}</span>
+                      <button
+                        className="settings-whitelist-remove"
+                        type="button"
+                        title={t('settings.common.remove', { defaultValue: '移除' })}
+                        onClick={() => {
+                          const next = whitelist.filter((_, i) => i !== idx);
+                          setWhitelist(next);
+                          window.api.musicWhitelistSet(next).catch(() => {});
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                  })}
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.whitelist.addTitle', { defaultValue: '添加播放器' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.whitelist.addHint', { defaultValue: '手动输入播放器进程名，或自动从当前 SMTC 会话中检测' })}</div>
+                </div>
+                <div className="settings-whitelist-add-row">
+                  <input
+                    className={`settings-whitelist-input${whitelistInputError ? ' error' : ''}`}
+                    type="text"
+                    placeholder={whitelistInputError || t('settings.music.whitelist.placeholder', { defaultValue: '输入播放器进程名（如 Spotify.exe）' })}
+                    value={whitelistDraft}
+                    onFocus={() => { if (whitelistInputError) setWhitelistInputError(''); }}
+                    onChange={(e) => {
+                      setWhitelistDraft(e.target.value);
+                      if (whitelistInputError) setWhitelistInputError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddWhitelist();
+                    }}
+                  />
+                  <button className="settings-whitelist-add-btn" type="button" onClick={() => { handleAddWhitelist(); }}>{t('settings.common.add', { defaultValue: '添加' })}</button>
+                </div>
+                <div className="settings-whitelist-add-row" style={{ display: 'flex', alignItems: 'center' }}>
+                  <button
+                    className="settings-whitelist-add-btn"
+                    type="button"
+                    onClick={() => {
+                      if (whitelistInputError) setWhitelistInputError('');
+                      handleDetectSourceAppId().catch(() => {});
+                    }}
+                    disabled={detectingSourceAppId}
+                  >
+                    {detectingSourceAppId
+                      ? t('settings.music.whitelist.fetching', { defaultValue: '获取中…' })
+                      : t('settings.music.whitelist.fetchSourceProcess', { defaultValue: '获取播放进程' })}
+                  </button>
+                </div>
+                {detectedSources.length > 0 && (
+                  <div className="settings-card-subgroup">
+                    <div className="settings-card-subgroup-title">{t('settings.music.whitelist.detectedTitle', { defaultValue: '当前检测到' })}</div>
+                    <div className="settings-whitelist-detected-list">
+                      {detectedSources.map((source) => {
+                        const alreadyAdded = whitelist.some((w) => w.toLowerCase() === source.sourceAppId.toLowerCase());
+                        return (
+                          <div className="settings-whitelist-detected-item" key={source.sourceAppId}>
+                            {source.thumbnail && (
+                              <img
+                                className="settings-whitelist-detected-thumb"
+                                src={source.thumbnail}
+                                alt=""
+                              />
+                            )}
+                            <span className="settings-whitelist-detected-name">{source.sourceAppId}</span>
+                            {alreadyAdded ? (
+                              <span className="settings-whitelist-detected-badge">{t('settings.music.whitelist.added', { defaultValue: '已添加' })}</span>
+                            ) : (
+                              <button
+                                className="settings-whitelist-add-btn"
+                                type="button"
+                                onClick={() => {
+                                  const next = [...whitelist, source.sourceAppId];
+                                  setWhitelist(next);
+                                  window.api.musicWhitelistSet(next).catch(() => {});
+                                }}
+                              >
+                                {t('settings.common.add', { defaultValue: '添加' })}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {musicSettingsPage === 'lyrics' && (
+            <div className="settings-cards">
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.lyrics.enabledTitle', { defaultValue: '歌词功能' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.lyrics.enabledHint', { defaultValue: '关闭后不再发送歌词相关网络请求，不显示歌词，不切换到歌词状态' })}</div>
+                </div>
+                <div className="settings-card-inline-row">
+                  <label className="settings-card-check">
+                    <input
+                      type="checkbox"
+                      checked={lyricsEnabled}
+                      onChange={(e) => {
+                        setLyricsEnabled(e.target.checked);
+                        window.api.musicLyricsEnabledSet(e.target.checked).catch(() => {});
+                        window.dispatchEvent(new CustomEvent('island:setting-changed', { detail: { channel: 'music:lyrics-enabled', value: e.target.checked } }));
+                      }}
+                    />
+                    {t('settings.music.lyrics.enabledToggle', { defaultValue: '启用歌词功能' })}
+                  </label>
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.lyrics.translationTitle', { defaultValue: '翻译歌词' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.lyrics.translationHint', { defaultValue: '关闭后不显示翻译歌词，不切换到翻译歌词状态' })}</div>
+                </div>
+                <div className="settings-card-inline-row">
+                  <label className="settings-card-check">
+                    <input
+                      type="checkbox"
+                      checked={lyricsTranslationEnabled}
+                      onChange={(e) => {
+                        setLyricsTranslationEnabled(e.target.checked);
+                        window.api.musicLyricsTranslationEnabledSet(e.target.checked).catch(() => {});
+                        window.dispatchEvent(new CustomEvent('island:setting-changed', { detail: { channel: 'music:lyrics-translation-enabled', value: e.target.checked } }));
+                      }}
+                    />
+                    {t('settings.music.lyrics.translationToggle', { defaultValue: '显示翻译歌词' })}
+                  </label>
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.lyrics.title', { defaultValue: '歌词源' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.lyrics.hint', { defaultValue: '自动模式根据 SMTC 检测到的播放器进程选择对应源，失败后依次尝试其他源，最后使用 LRCLIB 兜底' })}</div>
+                </div>
+                <div className="settings-lyrics-source-options">
+                  {lyricsSourceOptions.map((opt) => (
+                    <button
+                      key={opt.value}
+                      className={`settings-lyrics-source-btn ${lyricsSource === opt.value ? 'active' : ''}`}
+                      type="button"
+                      onClick={() => {
+                        setLyricsSource(opt.value);
+                        window.api.musicLyricsSourceSet(opt.value).catch(() => {});
+                      }}
+                    >
+                      {t(lyricsSourceOptionKeyMap[opt.value] || '', { defaultValue: opt.label })}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.lyrics.displayTitle', { defaultValue: '歌词显示' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.lyrics.displayHint', { defaultValue: '控制歌词界面的展示效果' })}</div>
+                </div>
+
+                <div className="settings-card-subgroup">
+                  <div className="settings-card-subgroup-title">{t('settings.music.lyrics.karaokeTitle', { defaultValue: '逐字扫光' })}</div>
+                  <div className="settings-music-hint">{t('settings.music.lyrics.karaokeHint', { defaultValue: '启用后歌词将以逐字高亮方式显示' })}</div>
+                  <div className="settings-card-inline-row">
+                    <label className="settings-card-check">
+                      <input
+                        type="checkbox"
+                        checked={lyricsKaraoke}
+                        onChange={(e) => {
+                          setLyricsKaraoke(e.target.checked);
+                          window.api.musicLyricsKaraokeSet(e.target.checked).catch(() => {});
+                          window.dispatchEvent(new CustomEvent('island:setting-changed', { detail: { channel: 'music:lyrics-karaoke', value: e.target.checked } }));
+                        }}
+                      />
+                      {t('settings.music.lyrics.karaokeToggle', { defaultValue: '启用逐字扫光效果' })}
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-card-subgroup">
+                  <div className="settings-card-subgroup-title">{t('settings.music.lyrics.clockTitle', { defaultValue: '歌词时钟' })}</div>
+                  <div className="settings-music-hint">{t('settings.music.lyrics.clockHint', { defaultValue: '在歌词界面封面与歌词之间显示当前北京时间' })}</div>
+                  <div className="settings-card-inline-row">
+                    <label className="settings-card-check">
+                      <input
+                        type="checkbox"
+                        checked={lyricsClock}
+                        onChange={(e) => {
+                          setLyricsClock(e.target.checked);
+                          window.api.musicLyricsClockSet(e.target.checked).catch(() => {});
+                        }}
+                      />
+                      {t('settings.music.lyrics.clockToggle', { defaultValue: '显示当前时间' })}
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-card-subgroup">
+                  <div className="settings-card-subgroup-title">{t('settings.music.lyrics.calibrateTitle', { defaultValue: '歌词校准' })}</div>
+                  <div className="settings-music-hint">{t('settings.music.lyrics.calibrateHint', { defaultValue: '歌词获取后延迟读取 SMTC 时间戳，修正歌词时间偏移' })}</div>
+                  <div className="settings-card-inline-row">
+                    <label className="settings-card-check">
+                      <input
+                        type="checkbox"
+                        checked={lyricsCalibrateEnabled}
+                        onChange={(e) => {
+                          setLyricsCalibrateEnabled(e.target.checked);
+                          window.api.musicLyricsCalibrateEnabledSet(e.target.checked).catch(() => {});
+                        }}
+                      />
+                      {t('settings.music.lyrics.calibrateToggle', { defaultValue: '启用歌词校准' })}
+                    </label>
+                  </div>
+                </div>
+                {lyricsCalibrateEnabled && (
+                  <div className="settings-card-subgroup">
+                    <div className="settings-hotkey-row" style={{ alignItems: 'center' }}>
+                      <label className="settings-field" style={{ flex: 1 }}>
+                        <span className="settings-field-label">{t('settings.music.lyrics.calibrateDelayLabel', { defaultValue: '触发延迟（秒）' })}</span>
+                        <input
+                          className="settings-field-input"
+                          type="number"
+                          min={0}
+                          max={120}
+                          value={lyricsCalibrateDelay}
+                          onChange={(e) => {
+                            const val = Math.max(0, Math.min(120, Math.floor(Number(e.target.value) || 0)));
+                            setLyricsCalibrateDelay(val);
+                            window.api.musicLyricsCalibrateDelaySet(val).catch(() => {});
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {musicSettingsPage === 'smtc' && (
+            <div className="settings-cards">
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.smtc.title', { defaultValue: 'SMTC 自动取消订阅' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.smtc.hint', { defaultValue: '用于清理长时间无更新的播放会话，默认永不取消订阅' })}</div>
+                </div>
+                <div className="settings-hotkey-row" style={{ alignItems: 'center' }}>
+                  <label className="settings-field" style={{ flex: 1 }}>
+                    <span className="settings-field-label">{t('settings.music.smtc.unsubscribeMs', { defaultValue: '取消订阅时间（毫秒）' })}</span>
+                    <input
+                      className="settings-field-input"
+                      type="number"
+                      min={1000}
+                      step={1000}
+                      value={musicSmtcUnsubscribeInput}
+                      disabled={musicSmtcNeverUnsubscribe}
+                      onChange={(e) => {
+                        setMusicSmtcUnsubscribeInput(e.target.value);
+                        if (musicSmtcConfigMessage) setMusicSmtcConfigMessage(null);
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="settings-hotkey-row" style={{ alignItems: 'center' }}>
+                  <label className="settings-card-check">
+                    <input
+                      type="checkbox"
+                      checked={musicSmtcNeverUnsubscribe}
+                      onChange={(e) => {
+                        setMusicSmtcNeverUnsubscribe(e.target.checked);
+                        if (musicSmtcConfigMessage) setMusicSmtcConfigMessage(null);
+                      }}
+                    />
+                    {t('settings.music.smtc.neverUnsubscribe', { defaultValue: '永不取消订阅' })}
+                  </label>
+                  <button
+                    className="settings-hotkey-btn"
+                    type="button"
+                    onClick={() => {
+                      saveMusicSmtcUnsubscribeConfig().catch((error: unknown) => {
+                        setMusicSmtcConfigMessage({
+                          type: 'error',
+                          text: t('settings.common.saveFailed', {
+                            defaultValue: '保存失败：{{error}}',
+                            error: error instanceof Error ? error.message : t('settings.common.unknownError', { defaultValue: '未知错误' }),
+                          }),
+                        });
+                      });
+                    }}
+                  >
+                    {t('settings.common.save', { defaultValue: '保存' })}
+                  </button>
+                </div>
+                {musicSmtcConfigMessage && (
+                  <div className="settings-music-hint" style={{ color: musicSmtcConfigMessage.type === 'error' ? '#ff8b8b' : '#7df2a0' }}>
+                    {musicSmtcConfigMessage.text}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {musicSettingsPage === 'providers' && (
+            <div className="settings-cards">
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div className="settings-card-title">{t('settings.music.providers.mode.title', { defaultValue: '汽水音乐请求模式' })}</div>
+                  <div className="settings-card-subtitle">{t('settings.music.providers.mode.hint', { defaultValue: '默认使用非登录态；登录态需要先完成汽水音乐登录' })}</div>
+                </div>
+                <div className="settings-lyrics-source-options">
+                  {(['guest', 'logged-in'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      className={`settings-lyrics-source-btn ${qishuiMode === mode ? 'active' : ''}`}
+                      type="button"
+                      disabled={qishuiAuthLoading || (mode === 'logged-in' && !qishuiLoggedIn)}
+                      onClick={() => handleQishuiModeChange(mode)}
+                    >
+                      {t(`settings.music.providers.mode.${mode}`, {
+                        defaultValue: mode === 'guest' ? '非登录态' : '登录态',
+                      })}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div className="settings-card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <img className="settings-provider-icon-img no-filter" src={PlayerIcon.SODAMUSIC} alt="" width={16} height={16} style={{ flexShrink: 0 }} />
+                      {t('settings.music.providers.sodaMusic.title', { defaultValue: '汽水音乐提供方' })}
+                    </div>
+                    <button
+                      className={`settings-hotkey-btn${qishuiLoggedIn ? ' settings-hotkey-btn-danger' : ''}`}
+                      type="button"
+                      disabled={qishuiAuthLoading}
+                      onClick={handleQishuiAuthAction}
+                    >
+                      {t(qishuiLoggedIn ? 'settings.musicProviderLogin.actions.logout' : 'settings.music.providers.sodaMusic.login', {
+                        defaultValue: qishuiLoggedIn ? '退出登录' : '登录',
+                      })}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          )}
+        </div>
+
+        <SettingsPageNavigation
+          activePage={musicSettingsPage}
+          expanded={pageNavigationExpanded}
+          pages={musicSettingsPages}
+          pageLabels={musicSettingsPageLabels}
+          navigationLabel={t('settings.music.pagination')}
+          onSelectPage={setMusicSettingsPage}
+        />
+      </div>
+    </div>
+  );
+}

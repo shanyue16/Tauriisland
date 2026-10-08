@@ -1,0 +1,285 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file timer.css
+ * @description 计时器输入框、显示、开始/暂停/重置控制按钮样式
+ */
+
+/** 时间标签页整体容器 - 左侧时间，右侧日期 */
+.time-tab-wrapper {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/** TimeTab 中 action buttons 的尺寸覆盖 */
+.time-tab-wrapper .action-buttons {
+  gap: 2px;
+}
+
+.time-tab-wrapper .action-btn {
+  width: 28px;
+}
+
+.time-tab-wrapper .action-btn-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/** TimeTab 中时间区与按钮组的分割线 */
+.time-tab-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(var(--color-text-rgb), 0.2);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/** 计时器容器 */
+.timer-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+/** 保留倒计时的实际尺寸，亮度面板仅覆盖其内容 */
+.timer-main-shell {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/** 计时器主体 */
+.timer-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.timer-main-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.brightness-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.brightness-control-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  min-height: 26px;
+  gap: 8px;
+}
+
+.brightness-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-island-text);
+  cursor: pointer;
+}
+
+.brightness-slider:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.brightness-value {
+  min-width: 32px;
+  color: var(--color-island-text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-main-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+/** 计时器输入框模式 */
+.timer-inputs {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+
+.timer-input {
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: rgba(var(--color-text-rgb), 0.1);
+  color: var(--color-island-text);
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 5px;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-input:focus {
+  background: rgba(var(--color-text-rgb), 0.2);
+  box-shadow: 0 0 8px rgba(var(--color-text-rgb), 0.3);
+}
+
+.timer-input:hover {
+  cursor: ns-resize;
+}
+
+.timer-sep {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.5);
+}
+
+/** 计时器显示模式 */
+.timer-display {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+
+.timer-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-island-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/** 计时器控制按钮 */
+.timer-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+/** 媒体调节按钮组（亮度、音量） */
+.media-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.media-buttons .action-btn {
+  width: 28px;
+}
+
+.media-buttons .action-btn-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/** 工具按钮组（截图、任务管理器） */
+.timer-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/** 工具按钮组内按钮尺寸覆盖（小于默认 action-btn） */
+.timer-tools .action-btn {
+  width: 26px;
+}
+
+.timer-tools .action-btn-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/** 工具按钮组与计时器之间的垂直分割线 */
+.timer-tools-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(var(--color-text-rgb), 0.2);
+  margin: 0 4px;
+}
+
+.timer-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.timer-btn:hover {
+  background: rgba(var(--color-text-rgb), 0.1);
+}
+
+.timer-btn:active {
+  transform: scale(0.9);
+}
+
+.timer-btn-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  filter: brightness(0) invert(var(--icon-invert));
+}
+
+/** 时间与计时器分割线 */
+.timer-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(var(--color-text-rgb), 0.2);
+  margin: 0 4px;
+}
+
+/** 计时器标题 */
+.timer-title {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.timer-title-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}

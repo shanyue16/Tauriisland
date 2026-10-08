@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "default permissions for tauriisland",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-current-monitor",
+    "core:webview:default",
+    "core:tray:default",
+    "autostart:default",
+    "store:default",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        { "url": "https://uapis.cn/*" },
+        { "url": "https://lrclib.net/*" },
+        { "url": "https://itunes.apple.com/*" }
+      ]
+    }
+  ]
+}

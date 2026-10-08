@@ -1,0 +1,116 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file weather-tab.css
+ * @description 天气 Tab 样式
+ */
+
+.weather-tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-island-text);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  contain: layout paint;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.weather-tab-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.weather-tab-icon-clickable {
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.weather-tab-icon-clickable:hover {
+  transform: scale(1.1);
+}
+
+.weather-tab-icon-clickable:active {
+  transform: scale(0.95);
+}
+
+.weather-tab-icon-spinning {
+  animation: weather-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes weather-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.7); }
+}
+
+.weather-tab-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.weather-tab-current {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.weather-tab-temp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.weather-tab-location {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.weather-tab-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(var(--color-text-rgb), 0.2);
+}
+
+.weather-tab-forecast {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.weather-tab-forecast-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.weather-tab-forecast-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}

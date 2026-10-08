@@ -1,0 +1,512 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file expanded-overview-panel.css
+ * @description Expanded 总览三栏面板样式
+ */
+
+/** ========== 总览三栏布局 ========== */
+
+.ov-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---- 左栏：封面 + 信息 + 控制 ---- */
+.ov-left {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  min-width: 0;
+  z-index: 1;
+}
+
+/** 圆形碟片封面 */
+.ov-disc {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: #1a1a1a;
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 0 18px 6px var(--disc-glow, rgba(0, 0, 0, 0.4)),
+              0 0 36px 12px var(--disc-glow, rgba(0, 0, 0, 0.2));
+  overflow: hidden;
+  transition: box-shadow 0.6s ease;
+  animation: discSpin 8s linear infinite;
+  animation-play-state: paused;
+}
+
+.ov-disc::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 14px 6px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ov-disc-cover {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #333;
+  background-size: cover;
+  background-position: center;
+}
+
+.ov-disc.spinning {
+  animation-play-state: running;
+}
+
+@keyframes discSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/** 元数据 + 控制按钮 */
+.ov-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0px;
+  min-width: 0;
+  max-width: 120px;
+}
+
+.ov-meta-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.88);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-meta-artist {
+  font-size: 9px;
+  color: rgba(var(--color-text-rgb), 0.50);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-meta-album {
+  font-size: 9px;
+  color: rgba(var(--color-text-rgb), 0.30);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/** 控制按钮 */
+.ov-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 3px;
+}
+
+.ov-ctrl-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(var(--color-text-rgb), 0.06);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  padding: 0;
+}
+
+.ov-ctrl-btn:hover { background: rgba(var(--color-text-rgb), 0.15); }
+.ov-ctrl-btn:active { transform: scale(0.9); }
+.ov-ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+
+.ov-ctrl-play {
+  width: 24px;
+  height: 24px;
+  background: rgba(var(--color-text-rgb), 0.10);
+}
+
+.ov-ctrl-icon {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  filter: brightness(0) invert(var(--icon-invert));
+  opacity: 0.85;
+}
+
+.ov-ctrl-icon--sm {
+  width: 10px;
+  height: 10px;
+}
+
+/* ---- 中栏：歌词 ---- */
+.ov-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 340px;
+  z-index: 1;
+}
+
+.ov-wave-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+@keyframes ov-lrc-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0);   opacity: 0.25; }
+  40%           { transform: translateY(-5px); opacity: 0.8; }
+}
+
+.ov-lrc-loading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  z-index: 1;
+}
+
+.ov-lrc-loading-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(var(--color-text-rgb), 0.6);
+  animation: ov-lrc-dot-bounce 1.2s ease-in-out infinite;
+}
+
+.ov-lrc-loading-dot:nth-child(1) { animation-delay: 0ms; }
+.ov-lrc-loading-dot:nth-child(2) { animation-delay: 160ms; }
+.ov-lrc-loading-dot:nth-child(3) { animation-delay: 320ms; }
+
+.ov-lrc-loading-label {
+  font-size: 10px;
+  color: rgba(var(--color-text-rgb), 0.28);
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}
+
+.ov-lrc-hint {
+  font-size: 11px;
+  color: rgba(var(--color-text-rgb), 0.18);
+  z-index: 1;
+}
+
+/** ========== 音乐总览引导 ========== */
+.ov-onboarding {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  z-index: 1;
+  animation: ovOnboardFadeIn 0.6s ease both;
+}
+
+@keyframes ovOnboardFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ov-onboarding-icon {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ov-onboarding-note {
+  font-size: 13px;
+  color: rgba(var(--color-text-rgb), 0.35);
+  z-index: 1;
+  animation: ovNoteFloat 2.5s ease-in-out infinite;
+}
+
+@keyframes ovNoteFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+
+.ov-onboarding-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(var(--color-text-rgb), 0.12);
+  animation: ovRingPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes ovRingPulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50%      { transform: scale(1.15); opacity: 0.8; }
+}
+
+.ov-onboarding-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.65);
+  letter-spacing: 0.5px;
+}
+
+.ov-onboarding-desc {
+  font-size: 11px;
+  color: rgba(var(--color-text-rgb), 0.38);
+}
+
+.ov-onboarding-features {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 1px;
+}
+
+.ov-onboarding-feat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: rgba(var(--color-text-rgb), 0.32);
+}
+
+.ov-onboarding-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(var(--color-text-rgb), 0.20);
+  flex-shrink: 0;
+}
+
+.ov-onboarding-hint {
+  margin-top: 3px;
+  font-size: 10px;
+  color: rgba(var(--color-text-rgb), 0.25);
+}
+
+@keyframes ov-lrc-intro-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50%       { opacity: 0.65; transform: scale(1.1); }
+}
+
+.ov-lrc-intro-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  filter: brightness(0) invert(var(--icon-invert));
+  animation: ov-lrc-intro-pulse 1.6s ease-in-out infinite;
+  margin-bottom: 6px;
+}
+
+.ov-lrc-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  z-index: 1;
+}
+
+.ov-lrc-line {
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(var(--color-text-rgb), 0.40);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: color 0.3s ease, opacity 0.3s ease, transform 0.3s ease;
+  opacity: 0.75;
+  animation: ovLrcIn 0.3s ease both;
+}
+
+.ov-lrc-line.current {
+  color: rgba(var(--color-text-rgb), 0.95);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 1;
+  transform: scale(1.02);
+  animation: ovLrcCurrentIn 0.35s ease both;
+}
+
+/* ---- 歌词行：逐字扫光 ---- */
+/* 保留 --lrc-prog 以兼容其它模块(例如 guide demo); 展开页真实数据改用 --syl-prog */
+@property --lrc-prog {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+@property --syl-prog {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+/* 每个音节: 按真实 start_offset_ms / duration_ms 驱动渐变进度 */
+.ov-lrc-syllable {
+  display: inline;
+  transition: --syl-prog 0.08s linear;
+  background: linear-gradient(
+    to right,
+    rgba(var(--color-text-rgb), 0.95) var(--syl-prog),
+    rgba(var(--color-text-rgb), 0.28) var(--syl-prog)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* ---- 歌词行：轮播滚动 ---- */
+.ov-lrc-marquee-wrap {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  box-sizing: border-box;
+  padding: 0 5px;
+}
+
+.ov-lrc-marquee-inner {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.ov-lrc-marquee-inner.scrolling {
+  animation: ovLrcMarquee var(--marquee-dur, 4s) linear 0.8s infinite;
+}
+
+@keyframes ovLrcMarquee {
+  0%    { transform: translateX(0); }
+  15%   { transform: translateX(0); }
+  85%   { transform: translateX(var(--marquee-dist, -50px)); }
+  100%  { transform: translateX(var(--marquee-dist, -50px)); }
+}
+
+@keyframes ovLrcIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 0.75; transform: translateY(0); }
+}
+
+@keyframes ovLrcCurrentIn {
+  from { opacity: 0; transform: translateY(5px) scale(1); }
+  to   { opacity: 1; transform: translateY(0) scale(1.02); }
+}
+
+/* ---- 右栏：时间/天气/倒计时/待办 ---- */
+.ov-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 70px;
+  max-width: 120px;
+  z-index: 1;
+}
+
+.ov-time {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ov-time-clock {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(var(--color-text-rgb), 0.80);
+  letter-spacing: 0.5px;
+}
+
+.ov-time-day {
+  font-size: 9px;
+  color: rgba(var(--color-text-rgb), 0.35);
+}
+
+.ov-weather {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.ov-weather-temp {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.65);
+}
+
+.ov-weather-desc {
+  font-size: 9px;
+  color: rgba(var(--color-text-rgb), 0.35);
+}
+
+.ov-countdown {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.ov-countdown-label {
+  font-size: 9px;
+  color: rgba(var(--color-text-rgb), 0.30);
+}
+
+.ov-countdown-value {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.55);
+}
+
+.ov-timer {
+  display: flex;
+  align-items: center;
+}
+
+.ov-timer-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--color-text-rgb), 0.60);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,259 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file notification-content.css
+ * @description Notification 整体内容容器过渡动画
+ */
+
+.notification-content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 12px;
+}
+
+.notification-main-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  animation: notifRowEnter 0.46s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+}
+
+.notification-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  animation: notifActionsEnter 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
+  min-width: 0;
+}
+
+.notification-actions--right {
+  justify-content: flex-end;
+}
+
+/* CLI 检测通知：按钮组上移一些 */
+.notification-actions--cli-detected {
+  margin-top: -5px;
+}
+
+.notification-actions--weather-alert-startup {
+  width: 100%;
+  margin-top: -8px;
+}
+
+.notification-actions--weather-alert-startup .notification-decision-actions {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.notification-actions--update-available {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.notification-update-source {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 11px;
+  color: rgba(var(--color-text-rgb), 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notification-snooze-actions,
+.notification-decision-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notification-actions--right .notification-decision-actions {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.notification-action-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-island-text);
+  cursor: pointer;
+  transition: transform 0.15s ease, background-color 0.2s ease, opacity 0.2s ease;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.notification-action-btn:hover {
+  transform: translateY(-1px);
+}
+
+.notification-action-btn:active {
+  transform: translateY(0);
+}
+
+.notification-action-snooze {
+  background: rgba(var(--color-text-rgb), 0.14);
+}
+
+.notification-action-snooze:hover {
+  background: rgba(var(--color-text-rgb), 0.22);
+}
+
+.notification-action-complete {
+  background: rgba(47, 211, 120, 0.34);
+}
+
+.notification-action-complete:hover {
+  background: rgba(47, 211, 120, 0.5);
+}
+
+.notification-action-ignore {
+  background: rgba(var(--color-text-rgb), 0.1);
+}
+
+.notification-action-ignore:hover {
+  background: rgba(var(--color-text-rgb), 0.18);
+}
+
+.notification-action-favorite {
+  background: rgba(59, 130, 246, 0.24);
+}
+
+.notification-action-favorite:hover {
+  background: rgba(59, 130, 246, 0.38);
+}
+
+.notification-favorited-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(47, 211, 120, 0.96);
+  background: rgba(47, 211, 120, 0.16);
+  border: 1px solid rgba(47, 211, 120, 0.3);
+}
+
+/** ---- 剪贴板 URL 通知变体 ---- */
+.notification-actions--clipboard-url {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  animation: notifActionsEnter 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
+  min-width: 0;
+}
+
+.notification-url-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-url-nav-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-url-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.notification-url-nav-btn-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
+.notification-url-index {
+  font-size: 11px;
+  color: rgba(var(--color-text-rgb), 0.7);
+  min-width: 34px;
+  text-align: center;
+}
+
+.notification-url-list {
+  display: flex;
+  flex-wrap: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-action-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(59, 130, 246, 0.18);
+  color: rgba(var(--color-text-rgb), 0.9);
+  font-size: 10px;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.notification-url-favicon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  object-fit: contain;
+}
+
+.notification-action-url:hover {
+  background: rgba(59, 130, 246, 0.32);
+}
+
+/** pill 模式下通知内容容器收窄 */
+.island-shell.shape-pill .notification-content {
+  width: 480px;
+}
+
+@keyframes notifRowEnter {
+  0%   { opacity: 0; transform: translateY(7px) scale(0.97); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes notifActionsEnter {
+  0%   { opacity: 0; transform: translateY(5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}

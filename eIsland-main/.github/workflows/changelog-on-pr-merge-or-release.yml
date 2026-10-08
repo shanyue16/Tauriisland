@@ -1,0 +1,69 @@
+name: eisland CI Auto Update CHANGELOG (PR Merge / Release)
+
+on:
+  pull_request:
+    types: [closed]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-changelog:
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'release' && github.event.release.target_commitish == 'main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.event.release.target_commitish }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Sync release tag for changelog range
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          git fetch --force --tags origin
+          git fetch origin "refs/tags/${{ github.event.release.tag_name }}:refs/tags/${{ github.event.release.tag_name }}" --force
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+
+      - name: Generate CHANGE_LOG.md
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            npm run changelog:generate -- --no-unreleased
+          else
+            npm run changelog:generate
+          fi
+
+      - name: Commit and push CHANGE_LOG.md
+        shell: bash
+        run: |
+          if git diff --quiet -- docs/CHANGE_LOG.md; then
+            echo "No changelog updates detected."
+            exit 0
+          fi
+
+          git config user.name "eislandBot"
+          git config user.email "bot@electronisland.com"
+
+          git add docs/CHANGE_LOG.md
+          # Fall back to GITHUB_TOKEN when BOT_PAT is unavailable
+          PAT_TOKEN="${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}"
+          AUTH_HEADER="Authorization: Basic $(printf "eislandBot:${PAT_TOKEN}" | base64)"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git commit -m "docs: auto update CHANGE_LOG.md for #${{ github.event.pull_request.number }} by @${{ github.event.pull_request.user.login }} [skip ci]"
+            git -c "http.extraheader=${AUTH_HEADER}" push origin HEAD:${{ github.event.pull_request.base.ref }}
+          else
+            git commit -m "docs: auto update CHANGE_LOG.md for release ${{ github.event.release.tag_name }} by @${{ github.actor }} [skip ci]"
+            git -c "http.extraheader=${AUTH_HEADER}" push origin HEAD:${{ github.event.release.target_commitish }}
+          fi

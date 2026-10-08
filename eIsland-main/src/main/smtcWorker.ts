@@ -1,0 +1,171 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file smtcWorker.ts
+ * @description SMTC 媒体监听 Worker 线程，运行 SmtcMonitor 并将会话变更推送至主进程
+ * @author 鸡哥
+ */
+
+import { parentPort } from 'worker_threads';
+import { SmtcMonitor, type MediaProps, type PlaybackInfo, type TimelineProps } from '@eisland/windows-smtc-helper';
+
+if (!parentPort) throw new Error('smtcWorker must be run as a Worker thread');
+
+/** Worker 本地会话缓存条目 */
+interface CacheEntry {
+  media: MediaProps | null;
+  playback: PlaybackInfo | null;
+  timeline: TimelineProps | null;
+}
+
+/** 会话本地缓存（以 sourceAppId 为键） */
+const sessionCache = new Map<string, CacheEntry>();
+
+/**
+ * 序列化当前缓存中的会话并通过 parentPort 推送给主进程
+ * @param sourceAppId - 应用会话 ID
+ */
+function postSessionUpdate(sourceAppId: string, includeThumbnail = true): void {
+  const entry = sessionCache.get(sourceAppId);
+  if (!entry) return;
+
+  const { media, playback, timeline } = entry;
+  const mediaPayload = media ? {
+    title: media.title,
+    artist: media.artist,
+    albumTitle: media.albumTitle,
+    ...(includeThumbnail ? { thumbnail: media.thumbnail } : {}),
+  } : null;
+
+  parentPort!.postMessage({
+    type: 'session-update',
+    sourceAppId,
+    session: {
+      media: mediaPayload,
+      playback,
+      timeline,
+    },
+  });
+}
+
+const smtc = new SmtcMonitor();
+
+smtc.on('session-added', (sourceAppId: string, mediaProps: MediaProps) => {
+  const entry: CacheEntry = { media: mediaProps, playback: null, timeline: null };
+
+  /**
+   * 刷新 playback / timeline，避免自动连播时缓存的播放状态过期（fix #41）
+   * @docs https://github.com/JNTMTMTM/eIsland/issues/41
+   */
+  try {
+    const sessions = smtc.getMediaSessions();
+    const fresh = sessions.find((s) => s.sourceAppId === sourceAppId);
+    if (fresh) {
+      entry.playback = fresh.playback;
+      entry.timeline = fresh.timeline;
+    }
+  } catch { /* 忽略 */ }
+  sessionCache.set(sourceAppId, entry);
+  postSessionUpdate(sourceAppId);
+});
+
+smtc.on('session-removed', (sourceAppId: string) => {
+  sessionCache.delete(sourceAppId);
+  parentPort!.postMessage({ type: 'session-removed', sourceAppId });
+});
+
+smtc.on('session-media-changed', (sourceAppId: string, mediaProps: MediaProps) => {
+  const existing = sessionCache.get(sourceAppId) ?? { media: null, playback: null, timeline: null };
+  const updated: CacheEntry = { ...existing, media: mediaProps };
+
+  /**
+   * 刷新 playback / timeline，避免自动连播时缓存的播放状态过期（fix #41）
+   * @docs https://github.com/JNTMTMTM/eIsland/issues/41
+   */
+  try {
+    const sessions = smtc.getMediaSessions();
+    const fresh = sessions.find((s) => s.sourceAppId === sourceAppId);
+    if (fresh) {
+      updated.playback = fresh.playback;
+      updated.timeline = fresh.timeline;
+    }
+  } catch { /* 忽略 */ }
+  sessionCache.set(sourceAppId, updated);
+  postSessionUpdate(sourceAppId);
+});
+
+smtc.on('session-playback-changed', (sourceAppId: string, playbackInfo: PlaybackInfo) => {
+  const existing = sessionCache.get(sourceAppId) ?? { media: null, playback: null, timeline: null };
+  sessionCache.set(sourceAppId, { ...existing, playback: playbackInfo });
+  postSessionUpdate(sourceAppId, false);
+});
+
+smtc.on('session-timeline-changed', (sourceAppId: string, timelineProps: TimelineProps) => {
+  const existing = sessionCache.get(sourceAppId) ?? { media: null, playback: null, timeline: null };
+  sessionCache.set(sourceAppId, { ...existing, timeline: timelineProps });
+  postSessionUpdate(sourceAppId, false);
+});
+
+/** 接收主进程请求：主动查询当前所有 SMTC 会话（用于播放源检测按钮） */
+parentPort.on('message', (msg: { type: string }) => {
+  if (msg.type === 'detect-sources') {
+    try {
+      const sessions = smtc.getMediaSessions();
+      parentPort!.postMessage({
+        type: 'detect-sources-result',
+        sources: sessions.map((s) => {
+          const cached = sessionCache.get(s.sourceAppId);
+          return {
+            sourceAppId: s.sourceAppId,
+            isPlaying: (s.playback?.playbackStatus ?? 0) === 4,
+            hasTitle: Boolean(s.media?.title),
+            thumbnail: cached?.media?.thumbnail ?? s.media?.thumbnail ?? null,
+          };
+        }),
+      });
+    } catch {
+      parentPort!.postMessage({ type: 'detect-sources-result', sources: [] });
+    }
+  }
+});
+
+/** 初始化：启动监控 */
+smtc.start();
+
+/** 初始化：读取当前已存在的会话并推送快照 */
+try {
+  const initialSessions = smtc.getMediaSessions();
+  initialSessions.forEach((s) => {
+    sessionCache.set(s.sourceAppId, {
+      media: s.media,
+      playback: s.playback,
+      timeline: s.timeline,
+    });
+    postSessionUpdate(s.sourceAppId);
+  });
+} catch {
+  // 初始化读取失败时忽略，依赖后续事件驱动更新
+}
+
+/** 进程退出时清理 */
+process.on('exit', () => {
+  smtc.stop();
+});

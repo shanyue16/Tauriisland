@@ -1,0 +1,248 @@
+/*
+ * eIsland - A sleek, Apple Dynamic Island inspired floating widget for Windows, built with Electron.
+ * https://github.com/JNTMTMTM/eIsland
+ *
+ * Copyright (C) 2026 JNTMTMTM
+ * Copyright (C) 2026 pyisland.com
+ *
+ * Original author: JNTMTMTM[](https://github.com/JNTMTMTM)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/**
+ * @file AnnouncementContent.tsx
+ * @description 公告状态界面
+ * @author 鸡哥
+ */
+
+import { useState, useEffect, useCallback, useRef, type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
+import useIslandStore from '../../../store/slices';
+import { QuestionnaireBanner, useAnnouncementQuestionnaire } from '../../components/DynamicIslandQuestionnaireBanner';
+import { AnnouncementHeader } from './components/AnnouncementHeader';
+import { AnnouncementBody } from './components/AnnouncementBody';
+import { ANNOUNCEMENT_DEFAULTS, ANNOUNCEMENT_KEYS } from './config/announcementDefaults';
+import { useAdSlides } from './hooks/useAdSlides';
+import { AD_SLIDE_INTERVAL_MS } from './config/adSlidesDefaults';
+import { useAnnouncementData } from './hooks/useAnnouncementData';
+import { ProcessIndicator } from '../../components/DynamicIslandProcessIndicator';
+import { SvgIcon } from '../../../utils/SvgIcon';
+import '../../../styles/announcement/announcement.css';
+
+/**
+ * 公告页内容组件
+ * @returns 公告状态视图
+ */
+export function AnnouncementContent(): ReactElement {
+  const { t } = useTranslation();
+  const { setHover, setQuestionnaire } = useIslandStore();
+  const { loading, announcements, selectedAnnouncement, socialConfig, selectAnnouncement } = useAnnouncementData();
+  const questionnaireReminder = useAnnouncementQuestionnaire();
+  const adSlides = useAdSlides();
+  const [showVideo, setShowVideo] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [listExpanded, setListExpanded] = useState(true);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [isAdHovered, setIsAdHovered] = useState(false);
+  const [isAdFading, setIsAdFading] = useState(false);
+  const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 组件卸载时清除未完成的淡入淡出定时器 */
+  useEffect(() => {
+    return () => {
+      if (fadeTimeoutRef.current !== null) {
+        clearTimeout(fadeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  /** 带淡入淡出的切换广告 */
+  const switchSlide = useCallback((nextIndex: number) => {
+    if (isAdFading) return;
+    setIsAdFading(true);
+    fadeTimeoutRef.current = setTimeout(() => {
+      fadeTimeoutRef.current = null;
+      setCurrentSlide(nextIndex);
+      setIsAdFading(false);
+    }, 300);
+  }, [isAdFading]);
+
+  /** 广告位轮播定时器 */
+  useEffect(() => {
+    if (adSlides.length <= 1 || isAdHovered || isAdFading) return;
+    const timer = setInterval(() => {
+      switchSlide((currentSlide + 1) % adSlides.length);
+    }, AD_SLIDE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [adSlides, isAdHovered, isAdFading, currentSlide, switchSlide]);
+
+  /** 切换到上一张广告 */
+  const handlePrevSlide = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    switchSlide((currentSlide - 1 + adSlides.length) % adSlides.length);
+  }, [adSlides, currentSlide, switchSlide]);
+
+  /** 切换到下一张广告 */
+  const handleNextSlide = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    switchSlide((currentSlide + 1) % adSlides.length);
+  }, [adSlides, currentSlide, switchSlide]);
+
+  /** 切换公告时关闭视频和二维码，避免沿用上一条公告的媒体状态。 */
+  const handleSelectAnnouncement = (announcement: (typeof announcements)[number]): void => {
+    selectAnnouncement(announcement);
+    setShowVideo(false);
+    setShowQr(false);
+  };
+
+  const announcementList = !loading && announcements.length > 0 ? (
+    <div className={`announcement-list-container${listExpanded ? '' : ' collapsed'}`}>
+      <nav
+        className={`announcement-list${listExpanded ? '' : ' collapsed'}`}
+        aria-hidden={!listExpanded}
+      >
+        {announcements.map((announcement, index) => {
+          const selected = announcement === selectedAnnouncement;
+          return (
+            <button
+              key={announcement.id ?? `${announcement.updatedAt ?? 'announcement'}-${index}`}
+              type="button"
+              className={`announcement-list-item${selected ? ' active' : ''}`}
+              aria-current={selected ? 'true' : undefined}
+              tabIndex={listExpanded ? 0 : -1}
+              onClick={() => handleSelectAnnouncement(announcement)}
+            >
+              <span className="announcement-list-title">
+                {announcement.title || t(ANNOUNCEMENT_KEYS.DEFAULT_TITLE, ANNOUNCEMENT_DEFAULTS.DEFAULT_TITLE)}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+      <div
+        className="announcement-ad-space"
+        onClick={adSlides.length > 0 ? () => {
+          const linkUrl = adSlides[currentSlide].linkUrl?.trim();
+          if (!linkUrl || !/^https?:\/\//i.test(linkUrl)) return;
+          void window.api.clipboardOpenUrl(linkUrl);
+        } : undefined}
+        onMouseEnter={() => setIsAdHovered(true)}
+        onMouseLeave={() => setIsAdHovered(false)}
+        style={adSlides.length === 0 ? { cursor: 'default' } : undefined}
+      >
+        <div className="announcement-ad-image-wrapper">
+          {adSlides.length > 0 ? (
+            <>
+              <img
+                className={`announcement-ad-image${isAdFading ? ' fade-out' : ''}`}
+                src={adSlides[currentSlide].imageUrl}
+                alt={adSlides[currentSlide].title || t(ANNOUNCEMENT_KEYS.AD_SPACE, { defaultValue: ANNOUNCEMENT_DEFAULTS.AD_SPACE })}
+                draggable={false}
+              />
+              {adSlides[currentSlide].title && (
+                <span className="announcement-ad-text">{adSlides[currentSlide].title}</span>
+              )}
+              {adSlides.length > 1 && isAdHovered && (
+                <>
+                  <button
+                    type="button"
+                    className="announcement-ad-nav-btn prev"
+                    onClick={handlePrevSlide}
+                    aria-label={t(ANNOUNCEMENT_KEYS.AD_PREV, ANNOUNCEMENT_DEFAULTS.AD_PREV)}
+                  >
+                    <img src={SvgIcon.PREVIOUS} alt="" draggable={false} />
+                  </button>
+                  <button
+                    type="button"
+                    className="announcement-ad-nav-btn next"
+                    onClick={handleNextSlide}
+                    aria-label={t(ANNOUNCEMENT_KEYS.AD_NEXT, ANNOUNCEMENT_DEFAULTS.AD_NEXT)}
+                  >
+                    <img src={SvgIcon.NEXT} alt="" draggable={false} />
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="announcement-ad-placeholder">
+              <span>{t(ANNOUNCEMENT_KEYS.AD_SPACE, { defaultValue: ANNOUNCEMENT_DEFAULTS.AD_SPACE })}</span>
+            </div>
+          )}
+        </div>
+        {adSlides.length > 1 && (
+          <div className="announcement-ad-indicator">
+            <ProcessIndicator total={adSlides.length} current={currentSlide} />
+          </div>
+        )}
+      </div>
+    </div>
+  ) : undefined;
+
+  return (
+    <div className="announcement-state-content" onClick={(event) => event.stopPropagation()}>
+      <div className="announcement-panel">
+        <section className="announcement-detail">
+          <AnnouncementHeader
+            announcement={selectedAnnouncement}
+            socialConfig={socialConfig}
+            showVideo={showVideo}
+            showQr={showQr}
+            canToggleList={!loading && announcements.length > 0}
+            listExpanded={listExpanded}
+            onToggleList={() => {
+              setListExpanded((expanded) => {
+                if (!expanded) {
+                  setShowVideo(false);
+                  setShowQr(false);
+                }
+                return !expanded;
+              });
+            }}
+            onToggleVideo={() => {
+              if (!showVideo) {
+                setListExpanded(false);
+                setShowQr(false);
+              }
+              setShowVideo((visible) => !visible);
+            }}
+            onToggleQr={() => {
+              if (!showQr) {
+                setListExpanded(false);
+                setShowVideo(false);
+              }
+              setShowQr((visible) => !visible);
+            }}
+            onClose={() => setHover()}
+          />
+
+          <div className="announcement-divider" />
+
+          <AnnouncementBody
+            loading={loading}
+            announcement={selectedAnnouncement}
+            showVideo={showVideo}
+            showQr={showQr}
+            qrImageUrl={socialConfig.qqQrImageUrl}
+            announcementList={announcementList}
+            questionnaireBanner={questionnaireReminder.questionnaire ? (
+              <QuestionnaireBanner
+                count={questionnaireReminder.count}
+                onOpen={setQuestionnaire}
+                onDismiss={questionnaireReminder.dismiss}
+              />
+            ) : undefined}
+          />
+        </section>
+      </div>
+    </div>
+  );
+}

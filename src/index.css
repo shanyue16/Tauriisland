@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* 主题 CSS 变量 —— 由 Island 组件根据 theme 动态注入 */
+/* 这里只给默认值（暗色），实际值在运行时覆盖 */
+:root {
+  --island-bg: rgb(18, 18, 20);
+  --island-text: #ffffff;
+  --island-text-muted: rgba(255, 255, 255, 0.65);
+  --island-border: rgba(255, 255, 255, 0.12);
+  --island-accent: #0a84ff;
+  --sidebar-bg: rgba(0, 0, 0, 0.28);
+  --sidebar-tab-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-tab-active: rgba(255, 255, 255, 0.14);
+  --sidebar-tab-active-hover: rgba(255, 255, 255, 0.2);
+  --slider-track: rgba(255, 255, 255, 0.15);
+  --slider-thumb-bg: #ffffff;
+  --switch-track: rgba(255, 255, 255, 0.2);
+  --switch-thumb-bg: #ffffff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 隐藏滚动条但保留滚动功能 */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: transparent;
+}
+
+/* 滑块样式 */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--slider-track);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--slider-thumb-bg);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+/* 开关样式 */
+.switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--switch-track);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.switch.active {
+  background: var(--island-accent);
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--switch-thumb-bg);
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+.switch.active::after {
+  transform: translateX(16px);
+}
+
+/* 岛容器过渡动画 */
+.island-container {
+  transition-property: width, height, border-radius, background-color,
+    opacity;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition-duration: 280ms;
+}
+
+/* 设置面板侧边栏按钮 —— 颜色全部用 CSS 变量 */
+.sidebar-tab {
+  background: transparent;
+  color: var(--island-text-muted);
+  transition:
+    background-color 0.18s ease-out,
+    color 0.18s ease-out,
+    transform 0.18s ease-out;
+}
+.sidebar-tab:hover {
+  background: var(--sidebar-tab-hover);
+  color: var(--island-text);
+  transform: translateX(2px);
+}
+.sidebar-tab.active {
+  background: var(--sidebar-tab-active);
+  color: var(--island-text);
+}
+.sidebar-tab.active:hover {
+  background: var(--sidebar-tab-active-hover);
+  transform: translateX(0);
+}
+
+/* ===== SVG 呼吸律动边框（expanded 态） ===== */
+.island-belt-static {
+  animation: beltRhythm 4s ease-in-out infinite;
+}
+@keyframes beltRhythm {
+  0%, 100% {
+    stroke-width: 1.0;
+    stroke-opacity: 0.30;
+    filter: drop-shadow(0 0 1px rgba(96, 165, 250, 0.15));
+  }
+  50% {
+    stroke-width: 2.8;
+    stroke-opacity: 0.75;
+    filter: drop-shadow(0 0 4px rgba(244, 114, 182, 0.4));
+  }
+}
+
+/* ===== EQ 条动画（minimal 态音乐封面） ===== */
+@keyframes eqBar {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(0.35); }
+}
+.animate-eq-bar {
+  animation: eqBar 0.8s ease-in-out infinite alternate;
+  transform-origin: bottom center;
+}
+
+/* ===== 音频可视化柱条（expanded 态背景） ===== */
+@keyframes vizBar1 { from { height: 6%;  } to { height: 75%; } }
+@keyframes vizBar2 { from { height: 12%; } to { height: 90%; } }
+@keyframes vizBar3 { from { height: 4%;  } to { height: 60%; } }
+@keyframes vizBar4 { from { height: 18%; } to { height: 85%; } }

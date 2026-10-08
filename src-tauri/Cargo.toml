@@ -1,0 +1,32 @@
+[package]
+name = "tauriisland"
+version = "0.1.0"
+description = "A Dynamic Island for Windows"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "tauriisland_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-store = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# Windows SMTC — 直接调用 WinRT GlobalSystemMediaTransportControlsSessionManager
+windows = { version = "0.58", features = [
+  "Media_Control",
+  "Media",
+  "Foundation",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "implement",
+] }
