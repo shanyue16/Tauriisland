@@ -166,6 +166,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
    颜色取自封面主色），关键帧一并删除，避免留下死代码。 */
 
 
+/* ===== 新通知提醒入场 =====
+   岛在弹出提醒时会从收起尺寸动画到提醒尺寸，这一层再做一次淡入 + 轻微下移，
+   让"内容出现"和"岛变大"两个动作对上，避免内容先跳出来再被拉长。 */
+@keyframes alertIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ===== 分页容器（medium / expanded 三页共用，透明度 + 轻微位移过渡） ===== */
 .island-page {
   position: absolute;

@@ -11,7 +11,7 @@ export default function WeatherPage({ data }: WeatherPageProps) {
   if (!data) {
     return (
       <div
-        className="w-full h-full flex items-center justify-center pt-1 px-[14px]"
+        className="w-full h-full flex items-center justify-center pt-1 px-[14px] pr-[26px]"
         style={{ color }}
       >
         <div className="text-[11px] opacity-60">加载中...</div>
@@ -25,8 +25,9 @@ export default function WeatherPage({ data }: WeatherPageProps) {
   const tomorrow = fc[1];
 
   return (
+    // pt-1 pb-0.5 原来不对称，内容整体偏上；右侧同样要给竖排页码指示器让出通道（pr-[26px]）
     <div
-      className="w-full h-full flex items-center justify-center gap-2 pt-1 pb-0.5 px-[14px]"
+      className="w-full h-full flex items-center justify-center gap-2 py-[3px] px-[14px] pr-[26px]"
       style={{ color }}
     >
       {/* 今日列 */}

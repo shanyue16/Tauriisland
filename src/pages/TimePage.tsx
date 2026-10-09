@@ -16,7 +16,9 @@ export default function TimePage() {
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
 
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center pt-1 px-[14px]"
+    // pr-[26px] 而不是对称的 14px：悬浮态右侧有一条**竖排页码指示器**（right:8），
+    // 右对齐内容（时间/温度）会紧贴到它旁边。多留的 12px 是给指示器的专用通道。
+    <div className="w-full h-full flex flex-col items-center justify-center pt-1 px-[14px] pr-[26px]"
          style={{ color: "var(--island-text)" }}>
       <div className="font-semibold tabular-nums leading-tight">
         <span className="text-[22px]">{hh}</span>

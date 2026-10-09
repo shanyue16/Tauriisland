@@ -64,6 +64,30 @@ export interface Settings {
    * 非空时只有匹配到的播放器才会触发歌曲信息获取；为空表示不过滤。
    */
   musicWhitelist: string[];
+
+  // 通知
+  /** 是否读取系统通知（读取的是用户全部系统通知，默认开启） */
+  notificationsEnabled: boolean;
+  /**
+   * 通知黑名单：不读取/不显示这些应用的通知。
+   * 匹配 `PrimaryId`（app_id）或推导出的显示名，忽略大小写 + 子串匹配。
+   * **为空表示不过滤**（默认全读）。与 musicWhitelist 是相反语义，别混。
+   */
+  notificationBlacklist: string[];
+  /** 通知轮询间隔（ms）。每次读取要复制约 3.3MB 库快照，不要低于 5000 */
+  notificationPollMs: number;
+  /** 通知列表最多显示条数 */
+  notificationMaxItems: number;
+  /** 新通知到达时短暂展开岛提醒（关掉则只进列表、不弹） */
+  notificationAlert: boolean;
+  /** 提醒停留时长（ms）。鼠标悬停在提醒上时不自动收起 */
+  notificationAlertMs: number;
+  /**
+   * 日程/闹钟通知开关。
+   * ⚠️ 本期只落字段与开关，**没有真实触发器** —— 日程数据来源尚未定义。
+   * 接入日程模块后由它读取本开关，届时再补调用方（见 docs/notifications-plan.md §3.7）。
+   */
+  notifyOnAlarm: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -97,6 +121,15 @@ export const DEFAULT_SETTINGS: Settings = {
     "kugou",
     "PotPlayerMini64.exe",
   ],
+
+  // 通知（用户口径：默认开启读取、默认不过滤）
+  notificationsEnabled: true,
+  notificationBlacklist: [],
+  notificationPollMs: 10000,
+  notificationMaxItems: 20,
+  notificationAlert: true,
+  notificationAlertMs: 5000,
+  notifyOnAlarm: true,
 };
 
 export const ANIMATION_DURATION: Record<AnimationSpeed, number> = {

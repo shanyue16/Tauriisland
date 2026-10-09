@@ -336,7 +336,7 @@ export default function CalendarPage() {
   const selGanzhi = dayInfo?.ganzhi_day ? `${dayInfo.ganzhi_year ?? ""}年 ${dayInfo.ganzhi_day}日` : "";
 
   return (
-    <div className="w-full h-full flex gap-2.5 px-[14px] py-[10px]" style={{ color }}>
+    <div className="w-full h-full flex gap-2.5 px-[14px] py-[10px]" style={{ color}}>
       {/* ===== 左：单日卡片（本次不改其配色/布局） ===== */}
       {/* overflow-hidden + minWidth:0：卡宽固定 84px，内部大号日号/徽标/干支可能比
           内容盒更宽（居中时会向两侧溢出），这里裁到卡片圆角内，避免"最左边有内容
@@ -344,7 +344,7 @@ export default function CalendarPage() {
       <div
         className="shrink-0 flex flex-col items-center justify-center rounded-[10px] px-2 py-1.5 overflow-hidden"
         style={{
-          width: 84,
+          width: 94,
           minWidth: 0,
           background: "rgba(255,255,255,0.06)",
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",

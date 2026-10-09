@@ -44,16 +44,33 @@ function persist(settings: Settings) {
 /** 白名单字段规范化：只保留非空字符串（数组存在即为用户意图，空数组＝不过滤，需保留） */
 function normalizeWhitelist(value: unknown): string[] {
   if (!Array.isArray(value)) return [...DEFAULT_SETTINGS.musicWhitelist];
-  const list = value
+  return value
     .filter((v): v is string => typeof v === "string")
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
-  return list;
+}
+
+/**
+ * 通知黑名单规范化。
+ *
+ * 与白名单不同的是：**数组缺失时返回空数组**（= 不过滤 = 默认全读），
+ * 而不是回退到哪个非空默认值 —— 黑名单的"默认"本来就是空。
+ */
+function normalizeBlacklist(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
 }
 
 /** 默认值的深拷贝（避免 resetSettings 后共享引用被后续就地修改） */
 function cloneDefaults(): Settings {
-  return { ...DEFAULT_SETTINGS, musicWhitelist: [...DEFAULT_SETTINGS.musicWhitelist] };
+  return {
+    ...DEFAULT_SETTINGS,
+    musicWhitelist: [...DEFAULT_SETTINGS.musicWhitelist],
+    notificationBlacklist: [...DEFAULT_SETTINGS.notificationBlacklist],
+  };
 }
 
 // —— 逐字段防御性校验 ——
@@ -97,6 +114,14 @@ function normalizeSettings(raw: unknown): Settings {
     weatherCity: str(r.weatherCity, d.weatherCity),
     // 音乐（数组缺失→默认；空数组→保留，表示"不过滤"）
     musicWhitelist: normalizeWhitelist(r.musicWhitelist),
+    // 通知（数组缺失→空数组＝不过滤；默认开启读取）
+    notificationsEnabled: bool(r.notificationsEnabled, d.notificationsEnabled),
+    notificationBlacklist: normalizeBlacklist(r.notificationBlacklist),
+    notificationPollMs: num(r.notificationPollMs, d.notificationPollMs, 5000, 60000),
+    notificationMaxItems: num(r.notificationMaxItems, d.notificationMaxItems, 5, 100),
+    notificationAlert: bool(r.notificationAlert, d.notificationAlert),
+    notificationAlertMs: num(r.notificationAlertMs, d.notificationAlertMs, 2000, 15000),
+    notifyOnAlarm: bool(r.notifyOnAlarm, d.notifyOnAlarm),
   };
 }
 

@@ -16,6 +16,7 @@
     "autostart:default",
     "store:default",
     "http:default",
+    "notification:default",
     {
       "identifier": "http:allow-fetch",
       "allow": [

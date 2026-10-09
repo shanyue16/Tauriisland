@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../stores/settings";
-import { type HorizontalPosition, THEME_PRESETS } from "../types";
+import { type HorizontalPosition, type IslandState, THEME_PRESETS } from "../types";
 import SettingsPanel from "./SettingsPanel";
 import TimePage from "../pages/TimePage";
 import WeatherPage from "../pages/WeatherPage";
 import MusicPage from "../pages/MusicPage";
 import CalendarPage from "../pages/CalendarPage";
 import NotificationPage from "../pages/NotificationPage";
+import NotificationAlert from "./NotificationAlert";
+import { fetchNotifications } from "../services/notifications";
+import { isBlacklisted, type NotificationItem } from "../types/notification";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
 import { extractCoverColor, lighten } from "../utils/coverColor";
@@ -19,19 +23,41 @@ import { getWeatherIcon } from "./Icons";
 import type { WeatherData } from "../types/weather";
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
+import {
+  MEDIUM_PAGES,
+  EXPANDED_PAGES,
+  MEDIUM_MUSIC_INDEX,
+  EXPANDED_MUSIC_INDEX,
+  SETTINGS_PAGE_INDEX,
+  isLastMediumPage,
+  isLastExpandedPage,
+  expandedPageOnReturn,
+  mediumPageOnReturn,
+} from "../utils/pages";
+import { canScrollableAncestorScroll } from "../utils/scroll";
 
-// 四态架构
-const MEDIUM_PAGES = 3; // 时间页(0), 天气页(1), 音乐页(2)
-// 最后一个"页面"索引触发设置面板
-const SETTINGS_PAGE_INDEX = MEDIUM_PAGES; // = 3
-// expanded 态分页：音乐(0) / 日历(1) / 通知(2)
-const EXPANDED_PAGES = 3;
+// 页面路由全部集中在 utils/pages.ts（顺序、总数、跨态回落规则）
+// —— 这里不再写死 `currentPage === 2` 这类魔法数字，加页/调序才不会静默失效。
 
 // 固定尺寸
-const MINIMAL_H = 48;
-const MEDIUM_H = 64;
-const EXPANDED_W = 460; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
-const EXPANDED_H = 250; // 原 220：日历页上下不再拥挤
+const MINIMAL_H = 56;
+const MEDIUM_H = 74;
+const EXPANDED_W = 530; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
+const EXPANDED_H = 280; // 原 220：日历页上下不再拥挤
+/**
+ * 新通知提醒的高度 —— 比展开态矮得多，因为它只显示一条通知
+ * （应用名 + 标题 2 行 + 正文 2 行）。宽度沿用 EXPANDED_W，视觉上与展开态一致。
+ */
+/**
+ * 新通知提醒的高度范围。
+ *
+ * 实际高度**不写死**：由 Island 测量提醒内容的真实高度后再钳制到这个区间，
+ * 所以短通知（只有标题）得到一个矮窗口，长通知（标题+正文多行）得到高窗口。
+ */
+const ALERT_MIN_H = 68;
+const ALERT_MAX_H = 140;
+/** minimal 态有音乐时自动拉长宽度（让封面 + 歌名 + 时间能装下） */
+const MINIMAL_W_WITH_MUSIC = 320;
 /**
  * 展开态给窗口阴影预留的四周留白。
  * 岛本体原来 inset:0 填满整个窗口，18px 的阴影只能画出 3px 就被窗口边界裁断，
@@ -63,6 +89,96 @@ export default function Island() {
   const collapseTimerRef = useRef<number | null>(null);
   // expanded 态当前页（仅 UI 局部状态，不进 store；默认音乐页）
   const [expandedPage, setExpandedPage] = useState(0);
+  /**
+   * 跨态回落记忆：从某个态"往上滚"时回到原来那一页，而不是固定回首页。
+   * - lastExpandedPageRef：进入设置面板(maximal)前所在的展开页 → 从设置页上滚回到它
+   * - lastMediumPageRef：进入展开态前所在的悬浮页 → 从展开态上滚回到它
+   * 用 ref 而不是 state：只做"记住上次位置"，不需要触发重渲染。
+   */
+  const lastExpandedPageRef = useRef(0);
+  const lastMediumPageRef = useRef(MEDIUM_MUSIC_INDEX);
+  /** 设置面板是从哪个态进来的 —— 决定上滚时该回展开态还是悬浮态 */
+  const maximalFromRef = useRef<"expanded" | "medium">("expanded");
+
+  /**
+   * 新通知提醒：短暂把岛当成展开态来显示一条通知。
+   *
+   * 关键点：**不改 `state`**。用户的导航状态（minimal/medium/expanded/maximal 与当前页）
+   * 保持不变，提醒只是临时借用展开态的尺寸与一层覆盖内容，收起后就回到原样。
+   * 尺寸由 getSize() 里的 `alert ? 展开尺寸 : 正常尺寸` 决定，所以窗口会跟着变大再缩回。
+   */
+  const [alertItem, setAlertItem] = useState<NotificationItem | null>(null);
+  const alertTimerRef = useRef<number | null>(null);
+  /** 指针是否停在提醒上（停住时不自动收起，等移开再重新计时） */
+  const alertHoverRef = useRef(false);
+
+  /**
+   * 提醒内容的实测高度（ResizeObserver 量出来）。
+   *
+   * 提醒窗口**不写死高度**：内容长就高、内容短就矮。测的是提醒内容那一层的高度
+   * （含它自己的 padding），该层宽度恒等于岛体宽度，所以量出来的高度可直接当窗口高度。
+   * 复用同一个 observer：换通知时 React 会复用该 DOM 节点、observer 继续有效。
+   */
+  const [alertHeight, setAlertHeight] = useState<number | null>(null);
+  const alertObserverRef = useRef<ResizeObserver | null>(null);
+
+  /** 回调 ref：挂载/换节点时重新观察，量到的内容高度直接写进 state */
+  const alertMeasureRef = useCallback((el: HTMLDivElement | null) => {
+    if (alertObserverRef.current) {
+      alertObserverRef.current.disconnect();
+      alertObserverRef.current = null;
+    }
+    if (!el) return;
+    const measure = () => {
+      const measured = Math.round(el.getBoundingClientRect().height);
+      if (measured > 0) setAlertHeight((prev) => (prev === measured ? prev : measured));
+    };
+    measure();
+    // 观察尺寸变化：字体/换行/内容变化都能自动跟上
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    alertObserverRef.current = ro;
+  }, []);
+
+  // minimal 态有音乐时自动拉长宽度（让封面+歌名+时间能装下）。
+  // 说明放在 showAlert 之前：提醒校准动画基准时要按当前态算宽度。
+  const hasMusic = musicData?.active && musicData.playing;
+
+  /**
+   * 显示一条提醒。
+   *
+   * 两种情况不打扰用户：① 已经处在展开态/设置面板 —— 他正在看岛，弹提醒是噪音，
+   * 列表会在下一轮轮询里自己更新；② 用户关了提醒开关（effect 里已拦，这里再兜一层）。
+   *
+   * ⚠️ 用 `stateRef` 而不是把 `state` 放进依赖：本回调被全局探测 effect 依赖，
+   * 一旦随 `state` 变化，探测定时器就会每次状态切换都重建、`seen` 基线反复清零
+   * （表现为"提醒时快时慢、偶尔漏弹"）。依赖必须保持稳定。
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const showAlert = useCallback(
+    (item: NotificationItem) => {
+      const s = stateRef.current;
+      if (s === "expanded" || s === "maximal") return;
+      // 先把动画基准校准成"当前基础态尺寸"，避免从陈旧尺寸插值造成跳变。
+      // 提醒可以在任意态弹出，所以基准要按当前态算。
+      const base =
+        s === "minimal"
+          ? { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H }
+          : s === "medium"
+            ? { w: settings.mediumWidth, h: MEDIUM_H }
+            : { w: MAXIMAL_W, h: MAXIMAL_H };
+      currentSizeRef.current = base;
+      // 新提醒一律从"指针不在提醒上"开始：否则上一条提醒留下的悬停标记会让
+      // 新提醒的计时器一启动就自我顺延，永远不收起。
+      alertHoverRef.current = false;
+      // 新提醒从"未测量"开始，先按最小高度弹出，量到真实高度后再撑开
+      setAlertHeight(null);
+      setAlertItem(item);
+    },
+    [hasMusic, settings.minimalWidth, settings.mediumWidth]
+  );
 
   // 当前窗口实际尺寸（上一次动画结束后的值）
   const currentSizeRef = useRef({ w: 220, h: 48 });
@@ -70,16 +186,17 @@ export default function Island() {
   // 正在运行的动画帧 ID，用于取消前一次动画
   const animFrameRef = useRef<number | null>(null);
 
-  // 计算尺寸（CSS 像素 = 逻辑像素）
-  const MINIMAL_H = 48;
-  const MEDIUM_H = 64;
 
   // 计算尺寸
-  // minimal 态有音乐时自动拉长宽度（让封面+歌名+时间能装下）
-  const hasMusic = musicData?.active && musicData.playing;
-  const MINIMAL_W_WITH_MUSIC = 320;
 
   const getSize = () => {
+    // 提醒借用展开态宽度，高度按实测内容钳制（内容长→高，内容短→矮）。
+    // 测量未完成时先用 ALERT_MIN_H 兜底，测完立刻换真实值。
+    if (alertItem) {
+      const measured = alertHeight ?? ALERT_MIN_H;
+      const h = Math.min(Math.max(measured, ALERT_MIN_H), ALERT_MAX_H);
+      return { w: EXPANDED_W + SHADOW_PAD * 2, h: h + SHADOW_PAD * 2 };
+    }
     if (state === "minimal") return { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H };
     if (state === "medium") return { w: settings.mediumWidth, h: MEDIUM_H };
     if (state === "expanded") return { w: EXPANDED_W + SHADOW_PAD * 2, h: EXPANDED_H + SHADOW_PAD * 2 };
@@ -209,16 +326,20 @@ export default function Island() {
   // 鼠标进入
   const handleMouseEnter = useCallback(() => {
     clearTimers();
+    // 提醒显示期间锁住状态：否则悬停会把 minimal 顶成 medium，提醒收起后
+    // 用户会莫名其妙停在悬浮态（并且底下那层已经在动）
+    if (alertItem) return;
     if (state === "minimal") {
       hoverTimerRef.current = window.setTimeout(() => {
         setState("medium");
       }, settings.hoverDelay);
     }
-  }, [state, settings.hoverDelay, clearTimers, setState]);
+  }, [state, settings.hoverDelay, clearTimers, setState, alertItem]);
 
   // 鼠标离开
   const handleMouseLeave = useCallback(() => {
     clearTimers();
+    if (alertItem) return; // 提醒显示期间不自动收起
     if (state === "maximal") {
       collapseTimerRef.current = window.setTimeout(() => {
         setState("medium");
@@ -229,79 +350,107 @@ export default function Island() {
         setState("minimal");
       }, settings.collapseDelay);
     }
-  }, [state, settings.collapseDelay, clearTimers, setState, setCurrentPage]);
+  }, [state, settings.collapseDelay, clearTimers, setState, setCurrentPage, alertItem]);
 
   // 滚轮翻页 / 状态切换
+  /**
+   * 从设置面板(maximal)回到展开态 —— 落在"进来之前那一页"。
+   *
+   * 以前是写死的 `setExpandedPage(0)`，所以在设置页上滚永远回到音乐页，
+   * 用户原本看的通知页被丢掉。现在统一走 pages.ts 的回落规则。
+   */
+  const returnFromMaximal = useCallback(() => {
+    // 从哪里来回哪里去。当前只有"展开态下滚"能进设置面板，所以实际都会回展开态；
+    // medium 分支是为将来"悬浮态直接进设置面板"预留的正确行为，别删。
+    if (maximalFromRef.current === "medium") {
+      setCurrentPage(mediumPageOnReturn(lastMediumPageRef.current));
+      setState("medium");
+      return;
+    }
+    setExpandedPage(expandedPageOnReturn(lastExpandedPageRef.current));
+    setCurrentPage(MEDIUM_MUSIC_INDEX);
+    setState("expanded");
+  }, [setState, setCurrentPage]);
+
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       if (!settings.wheelEnabled) return;
-      e.preventDefault();
+      // 提醒显示期间不接受翻页/转场（用户反馈"弹出消息时可以在各种状态之间切换"）
+      if (alertItem) return;
+
+      const root = e.currentTarget as HTMLElement;
+      const target = e.target as Element | null;
+      // 滚轮落在页内可滚动区域（通知列表、设置面板）**且内容还能朝这个方向滚**时，
+      // 把这次滚轮让给内容 —— 不翻页、也不 preventDefault。
+      // 内容已滚到头就往下走状态机（于是"设置面板滚到顶再上滚"能回到展开态）。
+      //
+      // 注意：这里**不能**因为"落在可滚动区域内"就无条件 return。
+      // 之前多了一道 `if (isInsideScrollable(...)) return;`，导致设置面板滚到顶后
+      // 仍然被拦下，用户永远无法从 maximal 滚回 expanded —— 这就是该 bug 的根因。
+      if (canScrollableAncestorScroll(target, e.deltaY, root)) return;
+
+      const dir = e.deltaY > 0 ? 1 : -1;
+      let acted = true;
 
       if (state === "minimal") {
-        setState("medium");
-        return;
-      }
-
-      if (state === "medium") {
-        if (e.deltaY > 0) {
-          if (currentPage === 2) {
-            // 音乐页 → 展开态
+        // 只能下滚进 medium；上滚不做事（允许浏览器默认行为）
+        if (dir < 0) acted = false;
+        else setState("medium");
+      } else if (state === "medium") {
+        if (dir > 0) {
+          if (isLastMediumPage(currentPage)) {
+            // 悬浮态最后一页（音乐）继续下滚 → 进展开态。记住来源页以便回滚。
+            lastMediumPageRef.current = currentPage;
             setState("expanded");
-          } else if (currentPage >= MEDIUM_PAGES - 1) {
-            // 最后一页 → 最大态（设置面板）
-            setCurrentPage(SETTINGS_PAGE_INDEX);
-            setState("maximal");
           } else {
             setCurrentPage(currentPage + 1);
           }
         } else {
           if (currentPage <= 0) {
-            setCurrentPage(MEDIUM_PAGES - 1);
+            setCurrentPage(MEDIUM_PAGES.length - 1);
           } else {
             setCurrentPage(currentPage - 1);
           }
         }
       } else if (state === "expanded") {
-        if (e.deltaY > 0) {
-          if (expandedPage < EXPANDED_PAGES - 1) {
-            // 页内下翻：音乐 → 日历 → 通知
-            setExpandedPage(expandedPage + 1);
-          } else {
-            // 已在最后一页，继续下滚 → 最大态（保留既有转场）
-            setCurrentPage(0);
+        if (dir > 0) {
+          if (isLastExpandedPage(expandedPage)) {
+            lastExpandedPageRef.current = expandedPage;
+            setCurrentPage(SETTINGS_PAGE_INDEX);
             setState("maximal");
+          } else {
+            setExpandedPage(expandedPage + 1);
           }
         } else {
           if (expandedPage > 0) {
-            // 页内上翻
             setExpandedPage(expandedPage - 1);
           } else {
-            // 已在第一页（音乐），继续上滚 → 悬浮态音乐页（保留既有转场）
-            setCurrentPage(2);
+            setCurrentPage(mediumPageOnReturn(lastMediumPageRef.current));
             setState("medium");
           }
         }
       } else if (state === "maximal") {
-        // 上滑 → 展开态
-        if (e.deltaY < 0) {
-          setExpandedPage(0);
-          setCurrentPage(2);
-          setState("expanded");
-        }
+        // 上滑 → 展开态（回到进来之前那一页）
+        if (dir < 0) returnFromMaximal();
+        else acted = false;
       }
+
+      // 只在真的发生了翻页/转场时吃掉滚动，否则把控制权还给页面（设置面板等要能滚）
+      if (acted) e.preventDefault();
     },
-    [state, currentPage, expandedPage, settings.wheelEnabled, setState, setCurrentPage]
+    [state, currentPage, expandedPage, settings.wheelEnabled, setState, setCurrentPage, returnFromMaximal, alertItem]
   );
 
-  // Esc 返回上一级
+  // Esc 返回上一级（与滚轮回退同口径）
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // 设置面板要能正常输入/回车；提醒期间不接受方向键翻页
+      if (alertItem) return;
       if (e.key === "Escape") {
         if (state === "maximal") {
-          setExpandedPage(0);
-          setCurrentPage(2);
-          setState("expanded");
+          returnFromMaximal();
         } else if (state === "expanded") {
+          setCurrentPage(mediumPageOnReturn(lastMediumPageRef.current));
           setState("medium");
         }
         return;
@@ -314,21 +463,148 @@ export default function Island() {
 
       if (state === "expanded") {
         e.preventDefault();
-        if (next && expandedPage < EXPANDED_PAGES - 1) setExpandedPage(expandedPage + 1);
+        if (next && expandedPage < EXPANDED_PAGES.length - 1) setExpandedPage(expandedPage + 1);
         else if (prev && expandedPage > 0) setExpandedPage(expandedPage - 1);
+        else if (prev) {
+          setCurrentPage(mediumPageOnReturn(lastMediumPageRef.current));
+          setState("medium");
+        }
       } else if (state === "medium") {
         e.preventDefault();
-        if (next && currentPage < MEDIUM_PAGES - 1) setCurrentPage(currentPage + 1);
+        if (next && currentPage < MEDIUM_PAGES.length - 1) setCurrentPage(currentPage + 1);
         else if (prev && currentPage > 0) setCurrentPage(currentPage - 1);
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [state, currentPage, expandedPage, setState, setCurrentPage]);
+  }, [state, currentPage, expandedPage, setState, setCurrentPage, returnFromMaximal, alertItem]);
 
   useEffect(() => {
     return () => clearTimers();
   }, [clearTimers]);
+
+  /**
+   * 全局新通知探测。
+   *
+   * `check_notifications` 只 stat 三个文件（微秒级），所以这里可以高频跑：
+   * **1200ms**。这是"提醒延迟"的主要来源 —— 原本 3s 一轮，最坏就要等 3s 才弹。
+   *
+   * 不再因为"已在展开态"而让位：以前展开态会 return，此时若通知页先把指纹标记为
+   * "已变化"，等用户滚回收起态时这里就探不到那次变化、提醒被吞掉。现在两个探测者
+   * 都调同一个命令（谁先拿到 changed 谁处理），互相不会吞事件。
+   */
+  useEffect(() => {
+    if (!settings.notificationsEnabled || !settings.notificationAlert) return;
+
+    let cancelled = false;
+    const seen = new Set<number>();
+    let primed = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await invoke<{ changed: boolean }>("check_notifications");
+        if (cancelled || !res?.changed) return;
+
+        const batch = await fetchNotifications(settings.notificationMaxItems);
+        if (cancelled) return;
+
+        if (!primed) {
+          // 基线：把当前已有的全部记为"已见"，不提醒
+          batch.forEach((it) => seen.add(it.id));
+          primed = true;
+          return;
+        }
+        const fresh = batch.filter(
+          (it) => !seen.has(it.id) && !isBlacklisted(it, settings.notificationBlacklist)
+        );
+        batch.forEach((it) => seen.add(it.id));
+        // 一次来多条时只提醒最新那条，避免连环弹窗
+        if (fresh.length > 0) showAlert(fresh[0]);
+      } catch {
+        /* 探测失败静默忽略，等下一轮 */
+      }
+    };
+
+    const timer = window.setInterval(() => void poll(), 1200);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    settings.notificationsEnabled,
+    settings.notificationAlert,
+    settings.notificationMaxItems,
+    settings.notificationBlacklist,
+    showAlert,
+  ]);
+
+  /**
+   * 收起提醒。
+   *
+   * 收起时要补两件事，否则会留下"鬼状态"：
+   *  ① 提醒期间我们锁住了 hover 逻辑，若指针仍停在岛上（提醒因为悬停被顺延过，
+   *     这是常见情况），要把"悬停进 medium"重新接上，不然岛会停在 minimal 不动；
+   *  ② 同步窗口尺寸基准，避免用陈旧的尺寸做插值。
+   */
+  const dismissAlert = useCallback(() => {
+    const stillHovering = alertHoverRef.current;
+    alertHoverRef.current = false;
+    setAlertItem(null);
+    // 清掉上一条的实测高度：否则下一条提醒会先按旧高度弹、再跳一下
+    setAlertHeight(null);
+    if (stillHovering) {
+      clearTimers();
+      if (state === "minimal") {
+        hoverTimerRef.current = window.setTimeout(() => {
+          setState("medium");
+        }, settings.hoverDelay);
+      }
+    }
+  }, [state, settings.hoverDelay, clearTimers, setState]);
+
+  /**
+   * 提醒停留计时（以 5s 为底，用户可调）。
+   *
+   * 指针停在提醒上时不自动收起 —— 用户可能正在读；移开后重新计时。
+   * 用 `alertHoverRef` 而不是 state，避免每次鼠标移动都重渲染。
+   */
+  useEffect(() => {
+    if (!alertItem) return;
+    const delay = Math.max(2000, settings.notificationAlertMs);
+    const schedule = () => {
+      if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = window.setTimeout(() => {
+        // 悬停中 → 顺延，等移开后由 onMouseLeave 重新安排
+        if (alertHoverRef.current) {
+          schedule();
+          return;
+        }
+        alertTimerRef.current = null;
+        dismissAlert();
+      }, delay);
+    };
+    schedule();
+    return () => {
+      if (alertTimerRef.current !== null) {
+        window.clearTimeout(alertTimerRef.current);
+        alertTimerRef.current = null;
+      }
+    };
+  }, [alertItem, settings.notificationAlertMs, dismissAlert]);
+
+  /** 鼠标离开提醒层：若正在顺延中，重新计时 */
+  const handleAlertMouseLeave = useCallback(() => {
+    alertHoverRef.current = false;
+    if (!alertItem) return;
+    if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
+    const delay = Math.max(2000, settings.notificationAlertMs);
+    alertTimerRef.current = window.setTimeout(() => {
+      alertTimerRef.current = null;
+      dismissAlert();
+    }, delay);
+  }, [alertItem, settings.notificationAlertMs, dismissAlert]);
 
   const floating = settings.style === "floating";
   const theme = THEME_PRESETS[settings.theme];
@@ -382,6 +658,22 @@ export default function Island() {
 
   // 状态标记（提前声明，outerStyle/innerStyle 都要用到）
   const isExpanded = state === "expanded";
+  /**
+   * 布局上是否按"展开态"处理 —— 展开态**或**正在弹新通知提醒。
+   *
+   * 提醒借用展开态的留白/阴影/圆角（SHADOW_PAD 那套规则必须一起用，否则阴影会被
+   * 窗口边界裁成硬边，就是之前那个"长方形黑边"），但 `state` 与用户页签都不变。
+   */
+  const isExpandedLayout = isExpanded || alertItem !== null;
+
+  /**
+   * 某个内容层当前是否应该可见。
+   *
+   * 弹出提醒时**所有常规层都要让位** —— 提醒层是 `inset:0` 的整块覆盖，而这些层是
+   * 半透明玻璃，底下那层如果还亮着就会透出来（用户看到"弹出消息时背景显示日期天气"）。
+   * 这里也顺手把 pointerEvents 关掉，避免隔着提醒层点到下面的按钮。
+   */
+  const layerVisible = (s: IslandState) => alertItem === null && state === s;
   const isDark = settings.theme === "dark";
 
   // 外层：填满 OS 窗口（展开态四周留出 SHADOW_PAD）
@@ -389,10 +681,10 @@ export default function Island() {
   //    即用户反复反馈的"长方形黑边"。深色底只能画在内层圆角岛上。
   const outerStyle: React.CSSProperties = {
     position: "absolute",
-    // 展开态四周留出 SHADOW_PAD，让阴影有空间衰减
-    inset: isExpanded ? SHADOW_PAD : 0,
+    // 展开态（含提醒）四周留出 SHADOW_PAD，让阴影有空间衰减
+    inset: isExpandedLayout ? SHADOW_PAD : 0,
     borderRadius: getBorderRadius(size.h),
-    overflow: isExpanded ? "visible" : "hidden",
+    overflow: isExpandedLayout ? "visible" : "hidden",
     background: "transparent",
     cursor: "pointer",
     transition:
@@ -402,7 +694,7 @@ export default function Island() {
   // 内层：岛主体
   // —— 四周内缩（内容不贴边）；展开态收紧到 3px
   // —— 四态统一：同一圈浅色发丝描边（var(--island-border)）
-  const innerPad = isExpanded ? 3 : 2;
+  const innerPad = isExpandedLayout ? 3 : 2;
   const innerStyle: React.CSSProperties = {
     position: "absolute",
     top: innerPad,
@@ -420,7 +712,7 @@ export default function Island() {
     // 因此展开态用紧凑阴影（约 8px 内衰减完），四态统一为
     // 「圆角 + 浅色发丝描边 + 柔和阴影 + 淡高光内边」。
     boxShadow: isDark
-      ? isExpanded
+      ? isExpandedLayout
         ? [
             "0 2px 6px rgba(0, 0, 0, 0.35)",
             "inset 0 0 0 1px rgba(255, 255, 255, 0.05)",
@@ -433,7 +725,7 @@ export default function Island() {
             // 与展开态及 minimal/medium/maximal 保持一致（圆角 + 柔和阴影 + 淡高光）。
             "inset 0 0 0 1px rgba(255, 255, 255, 0.05)",
           ].join(", ")
-      : isExpanded
+      : isExpandedLayout
         ? [
             "0 2px 6px rgba(0, 0, 0, 0.10)",
             "inset 0 0 0 1px rgba(0, 0, 0, 0.05)",
@@ -459,7 +751,7 @@ export default function Island() {
       style={{ ...outerStyle, ...cssVars }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onWheel={handleWheel}
+      onWheelCapture={handleWheel as unknown as React.WheelEventHandler<HTMLDivElement>}
     >
       {/* 原先此处渲染 SVG 呼吸律动边框（ExpandedBorder）——它就是用户反复看到的
           "长方形淡黑边框"：该 <rect> 缺少 viewBox，width/height="99" 被当作 99px
@@ -473,8 +765,8 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: state === "minimal" ? 1 : 0,
-            pointerEvents: state === "minimal" ? "auto" : "none",
+            opacity: layerVisible("minimal") ? 1 : 0,
+            pointerEvents: layerVisible("minimal") ? "auto" : "none",
             transition: "opacity 200ms ease",
             zIndex: 1,
           }}
@@ -485,8 +777,8 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: state === "medium" ? 1 : 0,
-            pointerEvents: state === "medium" ? "auto" : "none",
+            opacity: layerVisible("medium") ? 1 : 0,
+            pointerEvents: layerVisible("medium") ? "auto" : "none",
             transition: "opacity 200ms ease",
             zIndex: 1,
           }}
@@ -505,7 +797,7 @@ export default function Island() {
             }}
           >
             <PageIndicator
-              count={MEDIUM_PAGES}
+              count={MEDIUM_PAGES.length}
               activeIndex={currentPage}
               orientation="vertical"
               onSelect={setCurrentPage}
@@ -516,14 +808,15 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: state === "expanded" ? 1 : 0,
-            pointerEvents: state === "expanded" ? "auto" : "none",
+            opacity: layerVisible("expanded") ? 1 : 0,
+            pointerEvents: layerVisible("expanded") ? "auto" : "none",
             transition: "opacity 200ms ease",
             zIndex: 1,
           }}
         >
           <ExpandedContent
             page={expandedPage}
+            visible={isExpanded}
             musicData={musicData}
             lyrics={lyrics}
             onSelectPage={setExpandedPage}
@@ -533,14 +826,33 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: state === "maximal" ? 1 : 0,
-            pointerEvents: state === "maximal" ? "auto" : "none",
+            opacity: layerVisible("maximal") ? 1 : 0,
+            pointerEvents: layerVisible("maximal") ? "auto" : "none",
             transition: "opacity 200ms ease",
             zIndex: 1,
           }}
         >
           <SettingsPanel />
         </div>
+
+        {/* 新通知提醒层：最高 z-index，盖住当前态的内容（state 不变，收起即回原样） */}
+        {alertItem !== null && (
+          <div
+            onMouseEnter={() => {
+              alertHoverRef.current = true;
+            }}
+            onMouseLeave={handleAlertMouseLeave}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 8,
+              // 淡入 + 轻微上移，呼应"岛从顶部展开"的动作
+              animation: "alertIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+            }}
+          >
+            <NotificationAlert ref={alertMeasureRef} item={alertItem} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -722,11 +1034,14 @@ function MediumContent({
 // ===== expanded 态内容（音乐 / 日历 / 通知 三页 + 底部页码指示器） =====
 function ExpandedContent({
   page,
+  visible,
   musicData,
   lyrics,
   onSelectPage,
 }: {
   page: number;
+  /** 展开态是否可见 —— 三页同时 mounted，通知页靠它 gate 住轮询（否则一直读盘） */
+  visible: boolean;
   musicData: MusicData | null;
   lyrics: LyricLine[];
   onSelectPage: (index: number) => void;
@@ -735,7 +1050,7 @@ function ExpandedContent({
   const pages: { key: string; node: React.ReactNode }[] = [
     { key: "music", node: <MusicDetailView data={musicData} lyrics={lyrics} /> },
     { key: "calendar", node: <CalendarPage /> },
-    { key: "notification", node: <NotificationPage /> },
+    { key: "notification", node: <NotificationPage visible={visible} /> },
   ];
   const safePage = Math.min(Math.max(page, 0), pages.length - 1);
 
@@ -804,7 +1119,7 @@ function MusicDetailView({
 
   if (!data?.active) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px]" style={{ color }}>
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] pb-[8px]" style={{ color }}>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.3 }}>
           <path d="M9 18V5l12-2v13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -854,8 +1169,11 @@ function MusicDetailView({
         <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
       </div>
 
-      {/* 内容层 */}
-      <div className="w-full h-full flex flex-col gap-3 px-[18px] py-[14px] relative" style={{ zIndex: 1 }}>
+      {/* 内容层
+          底部只用 9px 内边距（而非与顶部对称的 14px）：展开态底部有一条居中横排的
+          页码指示器（bottom:3），对称内边距会让"控件 + 进度条"那一行贴到指示器上。
+          少掉的 5px 由 flex-1 的第一行吸收，视觉上更稳。 */}
+      <div className="w-full h-full flex flex-col gap-2 px-[18px] pt-[14px] pb-[9px] relative" style={{ zIndex: 1 }}>
         {/* 第一行：封面(带光晕) + 歌曲信息 + 歌词 */}
         <div className="flex flex-row gap-4 items-stretch flex-1 min-h-0">
           {/* 封面：真实 cover_url，加光晕 */}
@@ -906,8 +1224,8 @@ function MusicDetailView({
           <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
         </div>
 
-        {/* 第二行：控件 + 进度条 */}
-        <div className="flex flex-row items-center gap-3 mt-1">
+        {/* 第二行：控件 + 进度条（mt-1 去掉：纵向间距已由父级 gap-2 统一给） */}
+        <div className="flex flex-row items-center gap-3">
           <div className="flex items-center justify-center gap-2 shrink-0">
             <button
               onClick={handlePrev}

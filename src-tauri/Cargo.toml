@@ -17,9 +17,20 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-store = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-http = "2"
+# 发送系统通知（toast）。未打包桌面应用可以直接发，不需要 MSIX 包标识。
+# ⚠️ desktop 端只用到 title / body / icon / sound —— 官方文档明确
+#    "scheduling, grouping and action related options are ignored"，
+#    所以不要指望用 Schedule 做定时通知（见 docs/notifications-plan.md §3.7）。
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+# 系统通知读取 — 解析 %LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db
+# ⚠️ bundled 必须开：系统不自带 sqlite3.dll，走系统库会运行时缺 DLL。
+# ⚠️ 该库被 WPN 服务以 WAL 模式长期占用，且实测 WAL(2.1MB) 比主库(1MB) 还大，
+#    只读主库会丢掉绝大多数最新通知 → 必须把 .db/-wal/-shm 三个文件一起复制
+#    到临时目录再打开副本（详见 docs/notifications-plan.md §2.2）。
+rusqlite = { version = "0.40", features = ["bundled"] }
 # Windows SMTC — 直接调用 WinRT GlobalSystemMediaTransportControlsSessionManager
 # ⚠️ Foundation_Collections 必须开：GetSessions()（全量枚举会话）被
 #    #[cfg(feature = "Foundation_Collections")] 门控，缺失时会报
