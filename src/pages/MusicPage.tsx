@@ -25,11 +25,13 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
   if (!data.active) {
     return (
       <div
-        className="w-full h-full flex flex-col items-center justify-center pt-1 gap-1 px-[14px]"
+        className="w-full h-full flex flex-col items-center justify-center pt-1 gap-0.5 px-[14px]"
         style={{ color }}
       >
-        <MusicIcon size={20} style={{ color, opacity: 0.35 }} />
-        <div className="text-[10px] opacity-40">无活跃音乐</div>
+        <MusicIcon size={18} style={{ color, opacity: 0.35 }} />
+        <div className="text-[10px] opacity-40 leading-tight text-center truncate max-w-full">
+          {data.diag ? `⚠ ${data.diag}` : "无活跃音乐"}
+        </div>
       </div>
     );
   }
@@ -107,6 +109,7 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
 
 function formatTime(seconds: number): string {
   if (!seconds || seconds <= 0) return "0:00";
+  // 与播放器一致：对秒数截断（floor）
   const s = Math.floor(seconds);
   const m = Math.floor(s / 60);
   const sec = s % 60;

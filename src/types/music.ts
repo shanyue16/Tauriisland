@@ -22,6 +22,8 @@ export interface MusicData {
   min_seek?: number | null;
   /** SMTC MaxSeekTime (秒, 可能 0) — duration 兜底: MaxSeek-MinSeek */
   max_seek?: number | null;
+  /** 诊断信息：系统媒体服务不可用时给出原因 */
+  diag?: string | null;
   timestamp: number;
 }
 

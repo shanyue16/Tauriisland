@@ -2,6 +2,7 @@ import { useState, type ComponentType, type SVGProps } from "react";
 import AppearanceSettings from "./settings/AppearanceSettings";
 import InteractionSettings from "./settings/InteractionSettings";
 import ContentSourceSettings from "./settings/ContentSourceSettings";
+import WhitelistSettings from "./settings/WhitelistSettings";
 import AdvancedSettings from "./settings/AdvancedSettings";
 import MonitorSettings from "./settings/MonitorSettings";
 import About from "./settings/About";
@@ -9,6 +10,7 @@ import {
   PaletteIcon,
   MouseIcon,
   ClipboardListIcon,
+  SparklesIcon,
   WrenchIcon,
   MonitorIcon,
   InfoIcon,
@@ -20,6 +22,7 @@ type TabKey =
   | "appearance"
   | "interaction"
   | "content"
+  | "whitelist"
   | "advanced"
   | "monitor"
   | "about";
@@ -30,6 +33,7 @@ const TABS: { key: TabKey; label: string; Icon: IconType }[] = [
   { key: "appearance", label: "外观", Icon: PaletteIcon },
   { key: "interaction", label: "交互", Icon: MouseIcon },
   { key: "content", label: "内容源", Icon: ClipboardListIcon },
+  { key: "whitelist", label: "歌曲", Icon: SparklesIcon },
   { key: "advanced", label: "高级", Icon: WrenchIcon },
   { key: "monitor", label: "显示器", Icon: MonitorIcon },
   { key: "about", label: "关于", Icon: InfoIcon },
@@ -93,6 +97,7 @@ export default function SettingsPanel() {
         {active === "appearance" && <AppearanceSettings />}
         {active === "interaction" && <InteractionSettings />}
         {active === "content" && <ContentSourceSettings />}
+        {active === "whitelist" && <WhitelistSettings />}
         {active === "advanced" && <AdvancedSettings />}
         {active === "monitor" && <MonitorSettings />}
         {active === "about" && <About />}

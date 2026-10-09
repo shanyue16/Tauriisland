@@ -142,22 +142,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transform: translateX(0);
 }
 
-/* ===== SVG 呼吸律动边框（expanded 态） ===== */
-.island-belt-static {
-  animation: beltRhythm 4s ease-in-out infinite;
-}
-@keyframes beltRhythm {
-  0%, 100% {
-    stroke-width: 1.0;
-    stroke-opacity: 0.30;
-    filter: drop-shadow(0 0 1px rgba(96, 165, 250, 0.15));
-  }
-  50% {
-    stroke-width: 2.8;
-    stroke-opacity: 0.75;
-    filter: drop-shadow(0 0 4px rgba(244, 114, 182, 0.4));
-  }
-}
+/* ===== SVG 呼吸律动边框（已移除） =====
+   原先此处的 .island-belt-static + @keyframes beltRhythm 服务于 Island.tsx 的
+   ExpandedBorder 组件：其 <svg> 缺 viewBox，<rect width="99" height="99"> 被当作
+   99px 像素绘制（rx/ry 却按 100 单位换算），配合这套 stroke-width 1→2.8、
+   stroke-opacity 0.30→0.75 + 粉色 drop-shadow 的呼吸动画，叠加在深色底上就呈现为
+   用户反复反馈的"长方形淡黑边框"，且只在展开态渲染。
+   该组件已删除，关键帧规则一并移除，避免日后误用又画出方框。 */
 
 /* ===== EQ 条动画（minimal 态音乐封面） ===== */
 @keyframes eqBar {
@@ -169,8 +160,42 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transform-origin: bottom center;
 }
 
-/* ===== 音频可视化柱条（expanded 态背景） ===== */
-@keyframes vizBar1 { from { height: 6%;  } to { height: 75%; } }
-@keyframes vizBar2 { from { height: 12%; } to { height: 90%; } }
-@keyframes vizBar3 { from { height: 4%;  } to { height: 60%; } }
-@keyframes vizBar4 { from { height: 18%; } to { height: 85%; } }
+/* ===== 音频可视化柱条关键帧（已移除） =====
+   原先的 @keyframes vizBar1..4 供展开态音乐页的 24 根柱状条使用；
+   该柱状图已按用户要求改为折线图（src/components/AudioWaveLine.tsx，
+   颜色取自封面主色），关键帧一并删除，避免留下死代码。 */
+
+
+/* ===== 分页容器（medium / expanded 三页共用，透明度 + 轻微位移过渡） ===== */
+.island-page {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: opacity, transform;
+}
+.island-page-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.island-page-inactive {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+/* ===== 日历日格 hover / 过渡（颜色取自主题变量，不新增配色） ===== */
+.cal-cell {
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+.cal-cell:hover {
+  transform: translateY(-1px);
+}
+.cal-cell:active {
+  transform: translateY(0) scale(0.96);
+}
+

@@ -6,7 +6,11 @@ import SettingsPanel from "./SettingsPanel";
 import TimePage from "../pages/TimePage";
 import WeatherPage from "../pages/WeatherPage";
 import MusicPage from "../pages/MusicPage";
+import CalendarPage from "../pages/CalendarPage";
+import NotificationPage from "../pages/NotificationPage";
 import PageIndicator from "./PageIndicator";
+import AudioWaveLine from "./AudioWaveLine";
+import { extractCoverColor, lighten } from "../utils/coverColor";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { controlMusic } from "../services/music";
@@ -20,12 +24,21 @@ import type { LyricLine } from "../types/lyrics";
 const MEDIUM_PAGES = 3; // 时间页(0), 天气页(1), 音乐页(2)
 // 最后一个"页面"索引触发设置面板
 const SETTINGS_PAGE_INDEX = MEDIUM_PAGES; // = 3
+// expanded 态分页：音乐(0) / 日历(1) / 通知(2)
+const EXPANDED_PAGES = 3;
 
 // 固定尺寸
 const MINIMAL_H = 48;
 const MEDIUM_H = 64;
-const EXPANDED_W = 420;
-const EXPANDED_H = 220; // 比线框略高，给边框动画留呼吸空间
+const EXPANDED_W = 460; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
+const EXPANDED_H = 250; // 原 220：日历页上下不再拥挤
+/**
+ * 展开态给窗口阴影预留的四周留白。
+ * 岛本体原来 inset:0 填满整个窗口，18px 的阴影只能画出 3px 就被窗口边界裁断，
+ * 在四周形成一圈"硬"的深色边（用户看到的长方形黑边的一部分）。
+ * 现在窗口 = 岛本体 + 两侧留白，阴影有空间自然扩散。
+ */
+const SHADOW_PAD = 12;
 const MAXIMAL_W = 520;
 const MAXIMAL_H = 280;
 
@@ -48,6 +61,8 @@ export default function Island() {
   const { data: musicData, lyrics } = useMusic();
   const hoverTimerRef = useRef<number | null>(null);
   const collapseTimerRef = useRef<number | null>(null);
+  // expanded 态当前页（仅 UI 局部状态，不进 store；默认音乐页）
+  const [expandedPage, setExpandedPage] = useState(0);
 
   // 当前窗口实际尺寸（上一次动画结束后的值）
   const currentSizeRef = useRef({ w: 220, h: 48 });
@@ -67,7 +82,7 @@ export default function Island() {
   const getSize = () => {
     if (state === "minimal") return { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H };
     if (state === "medium") return { w: settings.mediumWidth, h: MEDIUM_H };
-    if (state === "expanded") return { w: EXPANDED_W, h: EXPANDED_H };
+    if (state === "expanded") return { w: EXPANDED_W + SHADOW_PAD * 2, h: EXPANDED_H + SHADOW_PAD * 2 };
     return { w: MAXIMAL_W, h: MAXIMAL_H };
   };
 
@@ -209,10 +224,6 @@ export default function Island() {
         setState("medium");
         setCurrentPage(0);
       }, 3000);
-    } else if (state === "expanded") {
-      collapseTimerRef.current = window.setTimeout(() => {
-        setState("medium");
-      }, 2500);
     } else if (state === "medium") {
       collapseTimerRef.current = window.setTimeout(() => {
         setState("minimal");
@@ -252,40 +263,68 @@ export default function Island() {
         }
       } else if (state === "expanded") {
         if (e.deltaY > 0) {
-          // 继续下 → 最大态
-          setCurrentPage(0);
-          setState("maximal");
+          if (expandedPage < EXPANDED_PAGES - 1) {
+            // 页内下翻：音乐 → 日历 → 通知
+            setExpandedPage(expandedPage + 1);
+          } else {
+            // 已在最后一页，继续下滚 → 最大态（保留既有转场）
+            setCurrentPage(0);
+            setState("maximal");
+          }
         } else {
-          // 上 → 悬浮态音乐页
-          setCurrentPage(2);
-          setState("medium");
+          if (expandedPage > 0) {
+            // 页内上翻
+            setExpandedPage(expandedPage - 1);
+          } else {
+            // 已在第一页（音乐），继续上滚 → 悬浮态音乐页（保留既有转场）
+            setCurrentPage(2);
+            setState("medium");
+          }
         }
       } else if (state === "maximal") {
-        // 上滑 → 回悬浮态
+        // 上滑 → 展开态
         if (e.deltaY < 0) {
-          setCurrentPage(0);
-          setState("medium");
+          setExpandedPage(0);
+          setCurrentPage(2);
+          setState("expanded");
         }
       }
     },
-    [state, currentPage, settings.wheelEnabled, setState, setCurrentPage]
+    [state, currentPage, expandedPage, settings.wheelEnabled, setState, setCurrentPage]
   );
 
-  // Esc 关闭 expanded / maximal
+  // Esc 返回上一级
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (state === "maximal") {
-          setState("medium");
-          setCurrentPage(0);
+          setExpandedPage(0);
+          setCurrentPage(2);
+          setState("expanded");
         } else if (state === "expanded") {
           setState("medium");
         }
+        return;
+      }
+
+      // 方向键翻页（与滚轮同口径）；maximal(设置面板) 不响应，避免影响表单
+      const next = e.key === "ArrowDown" || e.key === "ArrowRight";
+      const prev = e.key === "ArrowUp" || e.key === "ArrowLeft";
+      if (!next && !prev) return;
+
+      if (state === "expanded") {
+        e.preventDefault();
+        if (next && expandedPage < EXPANDED_PAGES - 1) setExpandedPage(expandedPage + 1);
+        else if (prev && expandedPage > 0) setExpandedPage(expandedPage - 1);
+      } else if (state === "medium") {
+        e.preventDefault();
+        if (next && currentPage < MEDIUM_PAGES - 1) setCurrentPage(currentPage + 1);
+        else if (prev && currentPage > 0) setCurrentPage(currentPage - 1);
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [state, setState, setCurrentPage]);
+  }, [state, currentPage, expandedPage, setState, setCurrentPage]);
 
   useEffect(() => {
     return () => clearTimers();
@@ -345,22 +384,25 @@ export default function Island() {
   const isExpanded = state === "expanded";
   const isDark = settings.theme === "dark";
 
-  // 外层：填满 OS 窗口，圆角裁剪
-  // expanded 态让 SVG 灯带能溢出到窗口阴影区（overflow: visible）
+  // 外层：填满 OS 窗口（展开态四周留出 SHADOW_PAD）
+  // ⚠️ 这一层**必须完全透明**：任何背景色/渐变都会在圆角岛之外露出一圈矩形色块，
+  //    即用户反复反馈的"长方形黑边"。深色底只能画在内层圆角岛上。
   const outerStyle: React.CSSProperties = {
     position: "absolute",
-    inset: 0,
+    // 展开态四周留出 SHADOW_PAD，让阴影有空间衰减
+    inset: isExpanded ? SHADOW_PAD : 0,
     borderRadius: getBorderRadius(size.h),
     overflow: isExpanded ? "visible" : "hidden",
+    background: "transparent",
     cursor: "pointer",
     transition:
       "border-radius 280ms cubic-bezier(0.2, 0.8, 0.2, 1), overflow 0ms",
   };
 
   // 内层：岛主体
-  // —— 四周 4px 内缩（内容不贴边，给 SVG 灯带让位）
-  // —— expanded 态 border=none（SVG 灯带在外面）
-  const innerPad = isExpanded ? 4 : 2;
+  // —— 四周内缩（内容不贴边）；展开态收紧到 3px
+  // —— 四态统一：同一圈浅色发丝描边（var(--island-border)）
+  const innerPad = isExpanded ? 3 : 2;
   const innerStyle: React.CSSProperties = {
     position: "absolute",
     top: innerPad,
@@ -371,21 +413,43 @@ export default function Island() {
     backgroundColor: bgWithAlpha,
     backdropFilter: "blur(20px)",
     WebkitBackdropFilter: "blur(20px)",
-    border: isExpanded ? "none" : `1px solid ${theme.border}`,
+    border: `1px solid ${theme.border}`,
+    // 阴影必须"装得下"：展开态只有 SHADOW_PAD(=12px) 的留白，若阴影扩散超出这个
+    // 范围，就会被窗口的矩形边界裁断，在圆角岛外留下一圈矩形暗边——这正是用户
+    // 反复反馈的"长方形黑边"的真因（不是描边，是阴影被窗口裁断）。
+    // 因此展开态用紧凑阴影（约 8px 内衰减完），四态统一为
+    // 「圆角 + 浅色发丝描边 + 柔和阴影 + 淡高光内边」。
     boxShadow: isDark
       ? isExpanded
-        ? ["0 4px 20px rgba(0,0,0,0.55)", "inset 0 0 0 1px rgba(0,0,0,0.4)"].join(", ")
+        ? [
+            "0 2px 6px rgba(0, 0, 0, 0.35)",
+            "inset 0 0 0 1px rgba(255, 255, 255, 0.05)",
+          ].join(", ")
         : [
             "0 4px 16px rgba(0, 0, 0, 0.5)",
             "0 1px 2px rgba(0, 0, 0, 0.4)",
-            "inset 0 0 0 2px rgba(0, 0, 0, 0.6)",
+            // 原为 inset 0 0 0 2px rgba(0, 0, 0, 0.6)：2px 60% 黑内描边会在深色玻璃上
+            // 形成一圈"黑框"（与展开态被移除的黑边同源）。改为极淡白色高光内边，
+            // 与展开态及 minimal/medium/maximal 保持一致（圆角 + 柔和阴影 + 淡高光）。
+            "inset 0 0 0 1px rgba(255, 255, 255, 0.05)",
           ].join(", ")
-      : [
-          "0 4px 16px rgba(0, 0, 0, 0.12)",
-          "0 1px 2px rgba(0, 0, 0, 0.08)",
-          "inset 0 0 0 2px rgba(0, 0, 0, 0.08)",
-        ].join(", "),
-    overflow: "visible",
+      : isExpanded
+        ? [
+            "0 2px 6px rgba(0, 0, 0, 0.10)",
+            "inset 0 0 0 1px rgba(0, 0, 0, 0.05)",
+          ].join(", ")
+        : [
+            "0 4px 16px rgba(0, 0, 0, 0.12)",
+            "0 1px 2px rgba(0, 0, 0, 0.08)",
+            // 同上：原 2px 黑内描边改为极淡内边（浅色主题）
+            "inset 0 0 0 1px rgba(0, 0, 0, 0.05)",
+          ].join(", "),
+    // 岛主体必须把内容裁到自己的圆角里：此前是 overflow:"visible"，而展开态的
+    // 外层也是 visible，于是任何越界元素（日历左侧单日卡、封面光晕等）都会画到
+    // 圆角岛之外——用户看到的"日历卡片左侧有内容超出窗口/被裁掉一角"就是这个。
+    // 注意：boxShadow 是画在元素**外部**的，不受自身 overflow 影响，
+    // 因此这里改成 hidden 不会吃掉那圈柔和阴影（四态仍统一为圆角+发丝描边+阴影）。
+    overflow: "hidden",
     transition:
       "border-radius 280ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 180ms ease, border-color 180ms ease",
   };
@@ -397,8 +461,11 @@ export default function Island() {
       onMouseLeave={handleMouseLeave}
       onWheel={handleWheel}
     >
-      {/* expanded 态 SVG 呼吸律动边框 —— 挂在 outerStyle 下，能溢出到阴影区 */}
-      {isExpanded && <ExpandedBorder radius={getBorderRadius(size.h)} />}
+      {/* 原先此处渲染 SVG 呼吸律动边框（ExpandedBorder）——它就是用户反复看到的
+          "长方形淡黑边框"：该 <rect> 缺少 viewBox，width/height="99" 被当作 99px
+          像素绘制（而非 99% 画布），低透明度的彩色描边叠在深色底上看起来发黑，
+          并且只在展开态渲染（与用户"只有展开态有"的现象完全吻合）。
+          按用户要求"看起来像窗口的阴影像其他状态一样"，移除该装饰边框。 */}
 
       <div style={innerStyle}>
         {/* 四层内容同时 mounted，用 opacity + pointerEvents 切换可见性 */}
@@ -425,6 +492,25 @@ export default function Island() {
           }}
         >
           <MediumContent page={currentPage} weatherData={weatherData} musicData={musicData} lyrics={lyrics} />
+          {/* 悬浮态页码：侧面竖向排列，可点击跳页 */}
+          <div
+            style={{
+              position: "absolute",
+              right: 8,
+              top: 0,
+              bottom: 0,
+              display: "flex",
+              alignItems: "center",
+              zIndex: 5,
+            }}
+          >
+            <PageIndicator
+              count={MEDIUM_PAGES}
+              activeIndex={currentPage}
+              orientation="vertical"
+              onSelect={setCurrentPage}
+            />
+          </div>
         </div>
         <div
           style={{
@@ -436,7 +522,12 @@ export default function Island() {
             zIndex: 1,
           }}
         >
-          <MusicDetailView data={musicData} lyrics={lyrics} />
+          <ExpandedContent
+            page={expandedPage}
+            musicData={musicData}
+            lyrics={lyrics}
+            onSelectPage={setExpandedPage}
+          />
         </div>
         <div
           style={{
@@ -623,48 +714,58 @@ function MediumContent({
   );
 }
 
-// ===== expanded 态 SVG 呼吸律动边框 =====
-// 接收 outerStyle 的 radius，rect 覆盖 outerStyle 整个区域
-function ExpandedBorder({ radius }: { radius: string }) {
-  // 把 CSS radius "24px" 转成 SVG rx/ry
-  const r = parseInt(radius) || 24;
-  // rect 覆盖 outerStyle 的 0-100%, viewBox 100x100 所以 radius 也按比例
-  const svgRx = (r / 420) * 100; // expanded 宽度 420
-  const svgRy = (r / 220) * 100; // expanded 高度 220
+// ===== expanded 态 SVG 呼吸律动边框（已移除） =====
+// 该组件是"长方形淡黑边框"的真凶：<svg> 没有 viewBox，导致 <rect width="99" height="99">
+// 按 99px 像素绘制而非铺满画布；island-belt-static 动画又让它呼吸闪动。
+// 用户明确要求展开态看起来像窗口阴影（与其它状态一致），故不再渲染，组件一并删除。
+
+// ===== expanded 态内容（音乐 / 日历 / 通知 三页 + 底部页码指示器） =====
+function ExpandedContent({
+  page,
+  musicData,
+  lyrics,
+  onSelectPage,
+}: {
+  page: number;
+  musicData: MusicData | null;
+  lyrics: LyricLine[];
+  onSelectPage: (index: number) => void;
+}) {
+  // 三页同时 mounted，用 class 做透明度 + 轻微位移过渡（与 medium 态同机制）
+  const pages: { key: string; node: React.ReactNode }[] = [
+    { key: "music", node: <MusicDetailView data={musicData} lyrics={lyrics} /> },
+    { key: "calendar", node: <CalendarPage /> },
+    { key: "notification", node: <NotificationPage /> },
+  ];
+  const safePage = Math.min(Math.max(page, 0), pages.length - 1);
 
   return (
-    <svg
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 20,
-        overflow: "visible",
-      }}
-      preserveAspectRatio="none"
-    >
-      <defs>
-        <linearGradient id="rainbowGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%"   stopColor="#f472b6" />
-          <stop offset="16%"  stopColor="#c084fc" />
-          <stop offset="32%"  stopColor="#60a5fa" />
-          <stop offset="48%"  stopColor="#22d3ee" />
-          <stop offset="64%"  stopColor="#86efac" />
-          <stop offset="80%"  stopColor="#fbbf24" />
-          <stop offset="100%" stopColor="#f472b6" />
-        </linearGradient>
-      </defs>
-      <rect
-        x="0.5" y="0.5" width="99" height="99"
-        rx={svgRx} ry={svgRy}
-        fill="none"
-        stroke="url(#rainbowGradient)"
-        strokeWidth={1.2}
-        className="island-belt-static"
-      />
-    </svg>
+    <div className="w-full h-full relative">
+      {pages.map((p, i) => (
+        <div
+          key={p.key}
+          className={`island-page ${i === safePage ? "island-page-active" : "island-page-inactive"}`}
+          aria-hidden={i !== safePage}
+        >
+          {p.node}
+        </div>
+      ))}
+
+      {/* 底部页码：全圆点，当前页为高亮圆点 */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 3,
+          display: "flex",
+          justifyContent: "center",
+          zIndex: 6,
+        }}
+      >
+        <PageIndicator count={pages.length} activeIndex={safePage} onSelect={onSelectPage} />
+      </div>
+    </div>
   );
 }
 
@@ -679,9 +780,27 @@ function MusicDetailView({
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
-  // 封面主色（未来从 sidecar dominant_color 提取，目前占位）
-  const accentColor = "#f472b6";
-  const accentColor2 = "#60a5fa";
+  // 封面主色：从封面图提取（被 CORS 拒绝或没有封面时回退默认粉/蓝）。
+  // 光晕与折线共用这一个来源 → 保证"折线颜色 = 封面周围光晕颜色"。
+  const [coverColor, setCoverColor] = useState<string | null>(null);
+  const coverUrl = data?.cover_url ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!coverUrl) {
+      setCoverColor(null);
+      return;
+    }
+    void extractCoverColor(coverUrl).then((c) => {
+      if (!cancelled) setCoverColor(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [coverUrl]);
+
+  const accentColor = coverColor ?? "#f472b6";
+  const accentColor2 = coverColor ? lighten(coverColor) : "#60a5fa";
 
   if (!data?.active) {
     return (
@@ -691,15 +810,19 @@ function MusicDetailView({
           <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/>
           <circle cx="18" cy="16" r="3" stroke="currentColor" strokeWidth="1.5"/>
         </svg>
-        <span className="text-[12px]" style={{ color: muted }}>暂无活跃音乐</span>
+        <span className="text-[12px]" style={{ color: muted }}>
+          {data?.diag ? `⚠ ${data.diag}` : "暂无活跃音乐"}
+        </span>
       </div>
     );
   }
 
   const formatTime = (s: number) => {
     if (!s || isNaN(s)) return "0:00";
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60).toString().padStart(2, "0");
+    // 与播放器一致：对秒数截断（floor）
+    const total = Math.floor(s);
+    const m = Math.floor(total / 60);
+    const sec = (total % 60).toString().padStart(2, "0");
     return `${m}:${sec}`;
   };
 
@@ -720,31 +843,15 @@ function MusicDetailView({
     await controlMusic("next");
   };
 
-  // 音频可视化柱条 — 24 根
-  const bars = Array.from({ length: 24 });
-
   return (
     <div className="w-full h-full relative overflow-hidden" style={{ color }}>
-      {/* 背景音频可视化（位于最底层） */}
+      {/* 背景音频可视化：折线图（颜色取自封面主色，与封面光晕同色）
+          原为 24 根柱状条 + vizBar1..4 关键帧，按用户要求改为折线。 */}
       <div
-        className="absolute inset-0 pointer-events-none flex items-end gap-[3px] px-4 pb-4"
-        style={{ zIndex: 0, opacity: data.playing ? 0.35 : 0.12 }}
+        className="absolute pointer-events-none"
+        style={{ left: 14, right: 14, bottom: 6, height: "46%", zIndex: 0 }}
       >
-        {bars.map((_, i) => (
-          <div
-            key={i}
-            className="flex-1 rounded-sm"
-            style={{
-              minHeight: 4,
-              background: `linear-gradient(to top, ${accentColor}, ${accentColor2})`,
-              animation: data.playing
-                ? `vizBar${(i % 4) + 1} ${0.6 + (i % 3) * 0.15}s ease-in-out infinite alternate`
-                : "none",
-              animationDelay: `${i * 0.04}s`,
-              height: data.playing ? undefined : 6,
-            }}
-          />
-        ))}
+        <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
       </div>
 
       {/* 内容层 */}

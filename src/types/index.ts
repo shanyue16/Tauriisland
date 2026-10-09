@@ -57,6 +57,13 @@ export interface Settings {
 
   // 天气
   weatherCity: string; // 空=按 IP 定位
+
+  // 音乐
+  /**
+   * 播放器白名单：进程名/应用标识片段（忽略大小写、子串匹配）。
+   * 非空时只有匹配到的播放器才会触发歌曲信息获取；为空表示不过滤。
+   */
+  musicWhitelist: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -81,6 +88,15 @@ export const DEFAULT_SETTINGS: Settings = {
   dpiAware: true,
 
   weatherCity: "",
+
+  // 默认白名单参考 eIsland
+  musicWhitelist: [
+    "QQMusic.exe",
+    "cloudmusic.exe",
+    "汽水音乐",
+    "kugou",
+    "PotPlayerMini64.exe",
+  ],
 };
 
 export const ANIMATION_DURATION: Record<AnimationSpeed, number> = {

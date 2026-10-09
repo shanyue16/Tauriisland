@@ -21,7 +21,10 @@
       "allow": [
         { "url": "https://uapis.cn/*" },
         { "url": "https://lrclib.net/*" },
-        { "url": "https://itunes.apple.com/*" }
+        { "url": "https://itunes.apple.com/*" },
+        { "url": "http://mobilecdn.kugou.com/*" },
+        { "url": "https://lyrics.kugou.com/*" },
+        { "url": "https://imge.kugou.com/*" }
       ]
     }
   ]

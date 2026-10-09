@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { fetchMusic } from "../services/music";
+import { useSettings } from "../stores/settings";
 import { fetchLyricsFromLrclib, type LyricsResult } from "../services/lyrics";
+import { kugouLookup, kugouLyrics } from "../services/kugou";
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
 
@@ -9,23 +12,33 @@ const TICK_INTERVAL = 66;  // ms — ~15Hz 平滑外推 (eIsland 同样 66ms)
 
 const lyricsCache = new Map<string, LyricsResult>();
 const itunesCoverCache = new Map<string, string>();
+/** 酷狗专辑封面缓存（按 track key）——换回同一首时必须能从这里恢复 */
+const kugouCoverCache = new Map<string, string>();
 
 function makeTrackKey(title: string | null, artist: string | null): string {
   return `${title || ""}||${artist || ""}`;
 }
 
-/** iTunes 封面兜底 — track 稳定后调用，缓存 */
+/**
+ * iTunes 封面兜底 — track 稳定后调用，缓存。
+ * 必须用 Tauri HTTP 插件（白名单已放行 itunes.apple.com）；全局 fetch 会被
+ * WebView 的 CORS 拦掉导致兜底静默失效。先按「曲名+歌手」查，失败再用纯曲名。
+ */
 async function fetchItunesCover(title: string, artist: string): Promise<string | null> {
   const key = makeTrackKey(title, artist);
   const cached = itunesCoverCache.get(key);
   if (cached !== undefined) return cached || null;
 
-  try {
-    const query = `${title} ${artist}`.trim();
-    const resp = await fetch(
-      `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1`
-    );
-    if (resp.ok) {
+  const cleanTitle = title.replace(/\s*[([（【][^)）】]*[)）】]\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+  const queries = [`${title} ${artist}`.trim(), cleanTitle, cleanTitle.split(/\s+/)[0] || title]
+    .filter((q, i, arr) => q && arr.indexOf(q) === i);
+
+  for (const query of queries) {
+    try {
+      const resp = await tauriFetch(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1`
+      );
+      if (!resp.ok) continue;
       const data = (await resp.json()) as { results?: { artworkUrl100?: string }[] };
       const url = data?.results?.[0]?.artworkUrl100;
       if (url) {
@@ -33,8 +46,9 @@ async function fetchItunesCover(title: string, artist: string): Promise<string |
         itunesCoverCache.set(key, big);
         return big;
       }
-    }
-  } catch { /* 忽略 */ }
+    } catch { /* 尝试下一个查询 */ }
+  }
+
   itunesCoverCache.set(key, ""); // 缓存空结果避免重复请求
   return null;
 }
@@ -48,6 +62,8 @@ export function useMusic() {
   const prevTrackKeyRef = useRef<string>("");
   const lyricsRef = useRef<LyricLine[]>([]);
   const lrclibDurationRef = useRef<number>(0);
+  /** 酷狗专辑封面（SMTC 无封面时用） */
+  const kugouCoverRef = useRef<string | null>(null);
 
   // position 外推基准
   const progressBaseRef = useRef<number>(0);       // 最新 rawPos 或 seek 重置后的位置
@@ -114,11 +130,55 @@ export function useMusic() {
   const poll = useCallback(async () => {
     try {
       const m = await fetchMusic();
+
+      // —— 播放器白名单过滤 ——
+      // 非空时只接受白名单内的会话（忽略大小写、子串匹配，与 eIsland 一致）；
+      // 用 getState 读取，避免把白名单加进 useCallback 依赖而重建轮询定时器。
+      const whitelist = useSettings.getState().settings.musicWhitelist ?? [];
+      const appName = (m.app_name ?? "").trim().toLowerCase();
+      // app_name 为空 ＝ 播放器没有上报自身标识（来源未知）：按「放行」处理——
+      // 宁可多显示一个未知来源，也不要有歌正在放却什么都看不到。
+      const blockedByWhitelist =
+        whitelist.length > 0 &&
+        m.active &&
+        appName.length > 0 &&
+        !whitelist.some((entry) => {
+          const e = entry.trim().toLowerCase();
+          return e.length > 0 && appName.includes(e);
+        });
+
+      if (blockedByWhitelist) {
+        // 白名单外的播放器：本拍视为"无歌曲"（只重置与曲目相关的引用与本地时钟）
+        if (prevTrackKeyRef.current) {
+          prevTrackKeyRef.current = "";
+          lyricsRef.current = [];
+          setLyrics([]);
+          kugouCoverRef.current = null;
+        }
+        stopTick();
+        setData({
+          ...m,
+          active: false,
+          title: null,
+          artist: null,
+          album: null,
+          cover_url: null,
+          playing: false,
+          position: 0,
+          duration: 0,
+        });
+        return;
+      }
+
       const nowTs = Date.now();
 
       const rawPos = m.position || 0;
       const rawDur = m.duration || 0;
-      const playing = m.playing;
+      // 时间线完全缺失的播放器（酷狗）：SMTC 没有 position/duration，
+      // 且其 PlaybackStatus 可能报非播放态，这里按"有会话即视为在播"驱动本地时钟，
+      // 否则进度条会永久停在 0。
+      const hasTimeline = (rawDur > 5 && rawDur < 3600) || rawPos > 0;
+      const playing = m.playing || (m.active && !hasTimeline);
       const lut = m.timeline_lut ?? null;
 
       // —— 换歌检测 ——
@@ -138,6 +198,7 @@ export function useMusic() {
         effectivePosRef.current = 0;
         lyricsRef.current = [];
         setLyrics([]);
+        kugouCoverRef.current = null;
 
         // 清掉待定 iTunes 兜底
         if (itunesTimerRef.current !== null) {
@@ -145,8 +206,8 @@ export function useMusic() {
           itunesTimerRef.current = null;
         }
 
-        // 异步加载歌词（同时拿到 LRCLIB duration）
-        void loadLyrics(m.title || "", m.artist || "");
+        // 异步加载曲目元数据（酷狗优先：歌词 + 精确时长 + 封面）
+        void loadTrackMeta(m.title || "", m.artist || "");
       } else if (!hasTrack && prevTrackKeyRef.current) {
         // 播放器退出
         prevTrackKeyRef.current = "";
@@ -162,21 +223,18 @@ export function useMusic() {
       }
 
       // —— Duration 优先级链 ——
-      // 1) LRCLIB duration (已加载的精确值)
-      // 2) SMTC rawDur (合理区间 + 与 LRCLIB 冲突时信 LRCLIB)
-      // 3) 歌词末行 time_ms/1000 + 5s
-      // 4) sameTrack 上次值 (Rust 侧 rawDur 已经 sameTrack 兜底过)
+      // 1) SMTC 有合理值就用它：这是"播放器自己上报"的时长，与播放器界面显示天然一致
+      //    （网易云/ PotPlayer 走这条；酷狗不上报时间线，所以落到 2）
+      // 2) SMTC 没有(0/超范围) → 用外部元数据源的精确时长（酷狗搜索接口 / LRCLIB）
+      // 3) 都没有 → 歌词末行 + 5s 尾奏
       let effectiveDur = 0;
       const lrclibDur = lrclibDurationRef.current;
+      const smtcPlausible = rawDur > 5 && rawDur < 3600;
 
-      if (lrclibDur > 0) {
-        effectiveDur = lrclibDur;
-        // SMTC 合理区间 (5s ~ 3600s) 且偏差 < 5s 时采信 LRCLIB (规格: LRCLIB 优先)
-        if (rawDur > 5 && rawDur < 3600 && Math.abs(rawDur - lrclibDur) < 5) {
-          effectiveDur = lrclibDur; // 冲突时仍信 LRCLIB
-        }
-      } else if (rawDur > 5 && rawDur < 3600) {
+      if (smtcPlausible) {
         effectiveDur = rawDur;
+      } else if (lrclibDur > 0) {
+        effectiveDur = lrclibDur;
       } else if (lyricsRef.current.length > 0) {
         effectiveDur = lyricsRef.current[lyricsRef.current.length - 1].time_ms / 1000 + 5;
       }
@@ -231,6 +289,7 @@ export function useMusic() {
       if (
         hasTrack &&
         !m.cover_url &&
+        !kugouCoverRef.current &&
         lastTrackStablePollsRef.current === 3 &&
         !itunesCoverCache.has(currentKey)
       ) {
@@ -251,7 +310,7 @@ export function useMusic() {
 
       const finalData: MusicData = {
         ...m,
-        cover_url: m.cover_url ?? null,
+        cover_url: m.cover_url || kugouCoverRef.current || itunesCoverCache.get(currentKey) || null,
         position: Math.round(tickPos * 10) / 10,
         duration: Math.round(effectiveDur * 10) / 10,
       };
@@ -271,8 +330,11 @@ export function useMusic() {
     }
   }, [ensureTick, stopTick]);
 
-  /** 异步加载歌词 + LRCLIB duration */
-  async function loadLyrics(title: string, artist: string) {
+  /**
+   * 异步加载曲目元数据：歌词 + 精确时长 + 封面。
+   * 选源顺序：酷狗（国内可用、就是播放器自己那首，时长/封面/歌词都全）→ LRCLIB 兜底。
+   */
+  async function loadTrackMeta(title: string, artist: string) {
     const key = makeTrackKey(title, artist);
     const cached = lyricsCache.get(key);
     if (cached) {
@@ -282,8 +344,38 @@ export function useMusic() {
         lrclibDurationRef.current = cached.duration;
         effectiveDurRef.current = cached.duration;
       }
+      // 歌词命中缓存时同样要恢复封面 —— 换歌时 kugouCoverRef 被清空，
+      // 否则"切走再切回同一首"会丢失封面。
+      const cachedCover = kugouCoverCache.get(key);
+      if (cachedCover) kugouCoverRef.current = cachedCover;
       return;
     }
+
+    // 1) 酷狗：曲库匹配 + 精确时长 + 专辑封面模板
+    try {
+      const kg = await kugouLookup(title, artist);
+      if (kg) {
+        if (kg.duration > 0) {
+          lrclibDurationRef.current = kg.duration;
+          effectiveDurRef.current = kg.duration;
+        }
+        if (kg.cover) {
+          kugouCoverRef.current = kg.cover;
+          kugouCoverCache.set(key, kg.cover);
+        }
+
+        const kgLines = await kugouLyrics(kg);
+        if (kgLines.length > 0) {
+          const res: LyricsResult = { lines: kgLines, duration: kg.duration || null };
+          lyricsCache.set(key, res);
+          lyricsRef.current = kgLines;
+          setLyrics(kgLines);
+          return;
+        }
+      }
+    } catch { /* 落到 LRCLIB */ }
+
+    // 2) LRCLIB 兜底
     try {
       const result = await fetchLyricsFromLrclib(title, artist);
       if (result && result.lines.length > 0) {
