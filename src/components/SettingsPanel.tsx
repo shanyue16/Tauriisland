@@ -53,13 +53,15 @@ export default function SettingsPanel() {
       className="w-full h-full flex"
       style={{ color: theme.text, background: "transparent" }}
     >
-      {/* 侧边栏 */}
+      {/* 侧边栏：8 个标签全部可见。
+          原来每行 44px（8×44 = 352px）远超 274px 的面板高度，后四个标签
+          （通知/高级/显示器/关于）必须滚动才能看到——导航项被折起来是硬伤。
+          行高收到 30px + 容器上下各 12px = 264px，装得下，滚动条随之消失。 */}
       <div
-        className="flex flex-col overflow-y-auto"
+        className="flex flex-col overflow-hidden shrink-0"
         style={{
           width: 88,
-          flexShrink: 0,
-          padding: "14px 8px",
+          padding: "12px 8px",
           background: theme.sidebarBg,
           borderRight: `1px solid ${theme.border}`,
         }}
@@ -73,14 +75,14 @@ export default function SettingsPanel() {
             }`}
             style={{
               width: "100%",
-              height: 44,
+              height: 30,
               flexShrink: 0,
-              fontSize: 11,
+              fontSize: 10.5,
               lineHeight: 1,
               whiteSpace: "nowrap",
               cursor: "pointer",
               border: "none",
-              borderRadius: 0,
+              borderRadius: 7,
               color: theme.text,
             }}
           >
@@ -93,10 +95,11 @@ export default function SettingsPanel() {
         ))}
       </div>
 
-      {/* 右侧内容区 */}
+      {/* 右侧内容区：分区标题由 .settings-body h3 统一成「小标题 + 发丝线」，
+          八个面板不必逐个改（未分层的 CSS 规则优先于 Tailwind 的 utilities 层）。 */}
       <div
-        className="flex-1 overflow-y-auto"
-        style={{ padding: "16px 20px" }}
+        className="flex-1 overflow-y-auto settings-body"
+        style={{ padding: "16px 20px 20px" }}
       >
         {active === "appearance" && <AppearanceSettings />}
         {active === "interaction" && <InteractionSettings />}

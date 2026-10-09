@@ -112,6 +112,22 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 /* 岛容器过渡动画 */
+/* ===== 设置面板内容区：分区标题统一为「小标题 + 发丝线」 =====
+   八个设置面板各自手写 <h3 className="text-[13px] font-semibold opacity-90">，
+   尺寸/间距/分组全靠逐个拿捏，读起来像八个不同作者做的页。这里用一条规则统一：
+   小标题 12px + 半粗 + 一条发丝线 —— 分隔线是结构性的（它划出分区），不是装饰。
+   注意本规则写在 Tailwind 的所有 @layer 之外：未分层的声明优先于 utilities 层，
+   所以不必去改那八个面板里的工具类。 */
+.settings-body h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  opacity: 0.92;
+  padding-bottom: 7px;
+  margin-bottom: 13px;
+  border-bottom: 1px solid var(--island-border);
+}
+
 .island-container {
   transition-property: width, height, border-radius, background-color,
     opacity;

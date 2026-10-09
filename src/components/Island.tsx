@@ -1119,7 +1119,7 @@ function MusicDetailView({
 
   if (!data?.active) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] pb-[8px]" style={{ color }}>
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] pb-[9px]" style={{ color }}>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.3 }}>
           <path d="M9 18V5l12-2v13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -1146,6 +1146,9 @@ function MusicDetailView({
   const progress = hasRealDuration
     ? Math.min((data.position / data.duration) * 100, 100)
     : 0;
+  // 色条与游标圆点共用同一个百分比：没有真实时长时给 2% 的"起步宽度"，
+  // 让 0:00 也能看出这是一条进度轨道（原实现只给色条、游标会停在 0 处）。
+  const progressPct = Math.min(Math.max(progress, hasRealDuration ? 0 : 2), 100);
 
   // SMTC 控制
   const handlePlayPause = async () => {
@@ -1160,34 +1163,41 @@ function MusicDetailView({
 
   return (
     <div className="w-full h-full relative overflow-hidden" style={{ color }}>
-      {/* 背景音频可视化：折线图（颜色取自封面主色，与封面光晕同色）
-          原为 24 根柱状条 + vizBar1..4 关键帧，按用户要求改为折线。 */}
+      {/* 背景音频可视化：折线图退到控制台下方当"声音地板"（颜色仍与封面光晕同源）。
+          原来它铺在 46% 高度处、压在第一行内容底下；现在贴岛体底边、与内容同宽，
+          读数最少的一层，不与封面英雄争重心（原为 24 根柱状条，按用户要求改折线）。 */}
       <div
         className="absolute pointer-events-none"
-        style={{ left: 14, right: 14, bottom: 6, height: "46%", zIndex: 0 }}
+        style={{ left: 18, right: 18, bottom: 0, height: 40, zIndex: 0 }}
       >
         <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
       </div>
 
-      {/* 内容层
-          底部只用 9px 内边距（而非与顶部对称的 14px）：展开态底部有一条居中横排的
-          页码指示器（bottom:3），对称内边距会让"控件 + 进度条"那一行贴到指示器上。
-          少掉的 5px 由 flex-1 的第一行吸收，视觉上更稳。 */}
-      <div className="w-full h-full flex flex-col gap-2 px-[18px] pt-[14px] pb-[9px] relative" style={{ zIndex: 1 }}>
-        {/* 第一行：封面(带光晕) + 歌曲信息 + 歌词 */}
-        <div className="flex flex-row gap-4 items-stretch flex-1 min-h-0">
-          {/* 封面：真实 cover_url，加光晕 */}
+      {/* 内容层 = 两段式布局：
+          ① 封面英雄（180px 见方）+ 信息列（标题 / 艺术家·专辑 / 当前歌词）
+          ② 控制台（传送键 + 进度条 + 时间）
+          justify-between 把控制台压在底部，中间余量成为"封面 ↔ 控件"之间的呼吸；
+          底部 9px 内边距是给 bottom:3 的横排页码指示器预留的通道。 */}
+      <div
+        className="w-full h-full flex flex-col justify-between px-[18px] pt-[14px] pb-[9px] relative"
+        style={{ zIndex: 1 }}
+      >
+        {/* 第一行：封面英雄 + 信息列 */}
+        <div className="flex flex-row gap-[22px] shrink-0" style={{ height: 180 }}>
+          {/* 封面 = 这一页唯一的重心（原 84px 的"缩略图 + 大段空白"构图，
+              现在给它 180px 和与折线同源的光晕）。 */}
           <div
-            className="relative shrink-0 rounded-lg overflow-hidden"
+            className="relative shrink-0 overflow-hidden"
             style={{
-              width: 84, height: 84,
+              width: 180,
+              height: 180,
+              borderRadius: 18,
               background: data.cover_url ? "transparent" : "rgba(255,255,255,0.04)",
               border: "1px solid rgba(255,255,255,0.08)",
               boxShadow: `
                 0 0 0 1px rgba(255,255,255,0.06),
-                0 0 12px 2px ${accentColor}40,
-                0 0 24px 4px ${accentColor2}25,
-                0 4px 16px rgba(0,0,0,0.4)
+                0 0 24px 4px ${accentColor}38,
+                0 10px 26px rgba(0,0,0,0.45)
               `,
             }}
           >
@@ -1200,48 +1210,69 @@ function MusicDetailView({
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center opacity-30">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/>
                 </svg>
               </div>
             )}
-          </div>
 
-          {/* 歌曲信息 */}
-          <div className="flex flex-col justify-center gap-1 min-w-0" style={{ flex: "0 0 34%" }}>
-            <div className="text-[15px] font-semibold truncate">{data.title || "未知曲目"}</div>
-            {data.artist && (
-              <div className="text-[11px] truncate" style={{ color: muted }}>
-                {data.artist}{data.album ? ` · ${data.album}` : ""}
-              </div>
-            )}
+            {/* 来源应用：原来占标题列的一行（9px 小字），现在压到封面左下角，
+                把整行宽度让给标题与艺术家。 */}
             {data.app_name && (
-              <div className="text-[9px]" style={{ color: muted, opacity: 0.5 }}>{data.app_name}</div>
+              <span
+                className="absolute"
+                style={{
+                  left: 10,
+                  bottom: 10,
+                  padding: "3px 7px",
+                  borderRadius: 5,
+                  fontSize: 9,
+                  letterSpacing: 0.2,
+                  background: "rgba(0,0,0,0.42)",
+                  color: "rgba(255,255,255,0.85)",
+                }}
+              >
+                {data.app_name}
+              </span>
             )}
           </div>
 
-          {/* 歌词区（透明融入） */}
-          <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
+          {/* 信息列：标题是文字焦点、"正在唱的那句"紧贴其下，两者构成一个阅读块 */}
+          <div className="flex flex-col justify-center min-w-0 flex-1">
+            <div className="text-[18px] font-semibold leading-tight truncate">
+              {data.title || "未知曲目"}
+            </div>
+            <div className="text-[11.5px] truncate mt-[5px]" style={{ color: muted }}>
+              {data.artist || "未知艺术家"}
+              {data.album ? ` · ${data.album}` : ""}
+            </div>
+            <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
+          </div>
         </div>
 
-        {/* 第二行：控件 + 进度条（mt-1 去掉：纵向间距已由父级 gap-2 统一给） */}
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex items-center justify-center gap-2 shrink-0">
+        {/* 第二行：控制台 —— 传送键在左，进度条与时间在右共用同一条基线。
+            原来进度条只有 3px、时间挂在条下方，中间还隔着 flex 间距，
+            看起来像两个不相干的零件；现在加粗到 5px + 白色游标圆点，
+            时间紧贴条下（5px），"现在到哪了"一眼可读。 */}
+        <div className="flex flex-row items-center gap-4">
+          <div className="flex items-center justify-center gap-1.5 shrink-0">
             <button
               onClick={handlePrev}
-              className="flex items-center justify-center p-1 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              aria-label="上一首"
+              className="flex items-center justify-center p-1.5 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
               style={{ background: "none", border: "none" }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
             </button>
             <button
               onClick={handlePlayPause}
+              aria-label={data.playing ? "暂停" : "播放"}
               className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
               style={{
-                width: 34, height: 34,
+                width: 38, height: 38,
                 background: "rgba(255,255,255,0.12)",
                 border: `1px solid ${accentColor}40`,
-                boxShadow: `0 0 8px ${accentColor}30`,
+                boxShadow: `0 0 10px ${accentColor}30`,
                 color: "#fff",
               }}
             >
@@ -1253,21 +1284,43 @@ function MusicDetailView({
             </button>
             <button
               onClick={handleNext}
-              className="flex items-center justify-center p-1 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              aria-label="下一首"
+              className="flex items-center justify-center p-1.5 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
               style={{ background: "none", border: "none" }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
             </button>
           </div>
-          <div className="flex flex-col gap-1.5 min-w-0" style={{ flex: 1 }}>
-            <div className="w-full h-[3px] rounded-full overflow-hidden relative" style={{ background: "rgba(255,255,255,0.15)" }}>
-              <div className="h-full rounded-full" style={{
-                width: `${Math.max(progress, hasRealDuration ? 0 : 2)}%`,
-                background: `linear-gradient(90deg, ${accentColor}, ${accentColor2})`,
-                transition: "width 0.3s linear",
-              }} />
+
+          <div className="flex-1 min-w-0">
+            <div className="w-full h-[5px] rounded-full relative" style={{ background: "rgba(255,255,255,0.15)" }}>
+              <div
+                className="absolute left-0 top-0 bottom-0 rounded-full"
+                style={{
+                  width: `${progressPct}%`,
+                  background: `linear-gradient(90deg, ${accentColor}, ${accentColor2})`,
+                  transition: "width 0.3s linear",
+                }}
+              />
+              <div
+                className="absolute rounded-full"
+                style={{
+                  left: `${progressPct}%`,
+                  top: "50%",
+                  width: 9,
+                  height: 9,
+                  marginLeft: -4.5,
+                  marginTop: -4.5,
+                  background: "#ffffff",
+                  boxShadow: "0 0 6px rgba(255,255,255,0.5)",
+                  transition: "left 0.3s linear",
+                }}
+              />
             </div>
-            <div className="flex justify-between" style={{ fontSize: 9, color: muted, fontVariantNumeric: "tabular-nums" }}>
+            <div
+              className="flex justify-between mt-[5px]"
+              style={{ fontSize: 10, color: muted, fontVariantNumeric: "tabular-nums" }}
+            >
               <span>{formatTime(data.position)}</span>
               <span>{hasRealDuration ? formatTime(data.duration) : "—:—"}</span>
             </div>
@@ -1297,17 +1350,11 @@ function LyricsBlock({
       )
     : null;
 
-  // 无歌词 → 空状态
+  // 无歌词 → 一行状态（新布局里歌词是标题下方的一小段，不再占一块居中区域）
   if (lyrics.length === 0) {
     return (
-      <div
-        className="flex flex-col justify-center items-center gap-[3px] text-center flex-1 min-w-0 px-2"
-        style={{ background: "transparent" }}
-      >
-        <div className="text-[10px]" style={{ opacity: 0.28 }}>等待歌词…</div>
-        <div className="text-[12px] font-medium" style={{ opacity: 1 }}>
-          {playing ? "♪ 正在播放" : "⏸ 已暂停"}
-        </div>
+      <div className="mt-[14px] text-[11px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+        {playing ? "♪ 正在播放 · 等待歌词…" : "⏸ 已暂停 · 等待歌词…"}
       </div>
     );
   }
@@ -1318,10 +1365,10 @@ function LyricsBlock({
   const nearby = lyrics.slice(startIdx, endIdx);
 
   return (
-    <div
-      className="flex flex-col justify-center items-center gap-[4px] text-center flex-1 min-w-0 px-2"
-      style={{ background: "transparent" }}
-    >
+    // 歌词左对齐并紧贴标题列：与左侧封面构成"图 + 文"的整块阅读区。
+    // （原实现是居中对齐，与封面的左轴、信息列的左轴互相打架，
+    //   而且四面留白让三行字看起来像漂在空里。）
+    <div className="mt-[14px] flex flex-col gap-[5px] min-w-0">
       {nearby.map((line, i) => {
         const isCurrent = startIdx + i === currentIdx;
         return (
@@ -1329,10 +1376,10 @@ function LyricsBlock({
             key={`${startIdx + i}-${line.time_ms}`}
             className="truncate max-w-full"
             style={{
-              fontSize: isCurrent ? 12 : 10,
+              fontSize: isCurrent ? 13 : 11,
               fontWeight: isCurrent ? 500 : 400,
-              opacity: isCurrent ? 1 : 0.35,
-              transition: "opacity 200ms ease, font-size 200ms ease",
+              color: isCurrent ? "#ffffff" : "rgba(255,255,255,0.32)",
+              transition: "color 200ms ease, font-size 200ms ease",
               lineHeight: 1.3,
             }}
           >

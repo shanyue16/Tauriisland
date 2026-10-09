@@ -29,12 +29,8 @@ const TEXT_PRIMARY = "#ffffff";
 const TEXT_SUB = "rgba(255,255,255,0.65)";
 /** 节气/节日小字：亮蓝（比 accent 更亮，保证深色底上可读） */
 const FESTIVAL_BLUE = "#5aa9ff";
-/** 调休上班徽标：红底白字（原方案"淡灰底+白字"对比度不足，按授权改进） */
-const BADGE_WORK_BG = "#ff5a5f";
-/** 左侧单日卡片沿用：休息日暖红 */
+/** 休息日暖红（日期英雄块的日号 / 月历里休息日的日号与底色） */
 const HOLIDAY_COLOR = "#ff7a7a";
-/** 左侧单日卡片沿用：农历小字 */
-const LUNAR_COLOR = "rgba(255,255,255,0.42)";
 /** 年份下拉可跳范围：当前年 ±5 */
 const YEAR_RANGE = 5;
 
@@ -216,6 +212,39 @@ function isLegalRest(info: UapiDay | null | undefined): boolean {
   return info.legal_holiday_type === "rest" || Boolean(info.legal_holiday_name);
 }
 
+/**
+ * 日期英雄块底部的「这一天是什么日子」徽标：法定假日名 > 调休上班 > 休息日 > 无。
+ * 网格里原来用 14px 的圆角小徽标（休/班）标同一件事，一个月会出现 8~10 个彩色小圆点，
+ * 是密集月历里最吵的一层；语义改由**格内文字**（"班"）+ 底色承担，徽标只在
+ * 「选中那一天」的英雄块里出现一次。
+ */
+function dayBadge(
+  info: UapiDay | null | undefined
+): { text: string; tone: "rest" | "work" } | null {
+  if (!info) return null;
+  if (isAdjustedWorkday(info)) return { text: "调休上班", tone: "work" };
+  if (info.legal_holiday_name) return { text: info.legal_holiday_name, tone: "rest" };
+  if (isRest(info)) return { text: "休息日", tone: "rest" };
+  return null;
+}
+
+/** ISO 周数（周一为一周之始，第 1 周含当年第一个周四） */
+function isoWeek(d: Date): number {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = (t.getDay() + 6) % 7; // 周一=0
+  t.setDate(t.getDate() - day + 3); // 移到本周四
+  const firstThursday = new Date(t.getFullYear(), 0, 4);
+  const fday = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - fday + 3);
+  return 1 + Math.round((t.getTime() - firstThursday.getTime()) / (7 * MS_PER_DAY));
+}
+
+/** 年内第几天（1-366） */
+function dayOfYear(d: Date): number {
+  const start = new Date(d.getFullYear(), 0, 1);
+  return Math.round((d.getTime() - start.getTime()) / MS_PER_DAY) + 1;
+}
+
 export default function CalendarPage() {
   const today = useRef(new Date()).current;
   const [cursor, setCursor] = useState(() => ({
@@ -325,161 +354,182 @@ export default function CalendarPage() {
   const selLunar = dayInfo
     ? `${dayInfo.lunar_month_name ?? ""}${dayInfo.lunar_day_name ?? ""}`
     : "";
+  // 节日/节气那行（法定假日名改由下方徽标承担，同一件事不说两遍）
   const selFestival =
     dayInfo?.lunar_festival ??
     (dayInfo?.solar_festival && dayInfo.solar_festival !== dayInfo.legal_holiday_name
       ? dayInfo.solar_festival
       : undefined) ??
-    dayInfo?.legal_holiday_name ??
     dayInfo?.solar_term ??
     "";
   const selGanzhi = dayInfo?.ganzhi_day ? `${dayInfo.ganzhi_year ?? ""}年 ${dayInfo.ganzhi_day}日` : "";
+  const selBadge = dayBadge(dayInfo);
+  // 选中日期的"年内进度"（Windhawk 口径里的 %weeknum% / %dayofyear%）
+  const selDate = new Date(selected.year, selected.month, selected.day);
+  const selWeekNo = isoWeek(selDate);
+  const selDayNo = dayOfYear(selDate);
 
   return (
-    // 内边距口径 = 线框稿 expand 规格 `14px 18px`：
-    //   · 左右 18px 与展开态另两页对齐（音乐详情页 px-[18px]、通知页 header/list 18px），
-    //     原来这里是 14px，切到日历页时左右两边的留白会比另两页窄 4px。
-    //   · 上下 14px：底部那条居中横排页码指示器位于 bottom:3（点高 7px，占据约 3~10px），
-    //     原来的 10px 下边距让日历网格几乎贴到指示器上。
-    <div className="w-full h-full flex gap-2.5 px-[18px] py-[14px]" style={{ color }}>
-      {/* ===== 左：单日卡片（本次不改其配色/布局） ===== */}
-      {/* overflow-hidden + minWidth:0：卡宽固定 84px，内部大号日号/徽标/干支可能比
-          内容盒更宽（居中时会向两侧溢出），这里裁到卡片圆角内，避免"最左边有内容
-          画到岛外"。岛主体本身也已改为 overflow:hidden 作为兜底。 */}
+    // 内边距口径 = 线框稿 expand 规格 `14px 18px`（与音乐详情页、通知页同一套）。
+    // 布局 = 两栏：左「日期英雄块」读日期，右「月历」挑日期，中间一条发丝线分组。
+    <div className="w-full h-full flex gap-[18px] px-[18px] py-[14px]" style={{ color }}>
+      {/* ===== 左：日期英雄块 =====
+          原来是一张 94px 窄卡（30px 日号 + 一串 8.5~9.5px 小字），既挤在窄条里、
+          又和右边网格争注意力。现在给足一栏：日号 46px 是全页重心，
+          "这一天是什么日子"自上而下依次读完（星期 → 日号 → 农历 → 节日 → 徽标 → 干支 → 年内进度）。 */}
       <div
-        className="shrink-0 flex flex-col items-center justify-center rounded-[10px] px-2 py-1.5 overflow-hidden"
+        className="shrink-0 flex flex-col justify-center overflow-hidden"
         style={{
-          width: 94,
+          width: 148,
           minWidth: 0,
-          background: "rgba(255,255,255,0.06)",
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          paddingRight: 18,
+          borderRight: "1px solid var(--island-border)",
         }}
       >
+        <div className="text-[11px] truncate" style={{ color: muted, letterSpacing: 0.6 }}>
+          {selWeekday}
+        </div>
         <div
           className="tabular-nums leading-none"
           style={{
-            fontSize: 30,
+            fontSize: 46,
             fontWeight: 600,
+            marginTop: 2,
             color: isRest(dayInfo) ? HOLIDAY_COLOR : color,
           }}
         >
           {pad2(selDayNum)}
         </div>
-        <div className="text-[10px] mt-0.5" style={{ color: muted }}>
-          {selWeekday}
-        </div>
         {selLunar && (
-          <div className="text-[9.5px] mt-0.5 truncate max-w-full" style={{ color: muted, opacity: 0.85 }}>
+          <div className="text-[11px] truncate max-w-full" style={{ marginTop: 7, color: "rgba(255,255,255,0.78)" }}>
             {selLunar}
           </div>
         )}
         {selFestival && (
-          <div
-            className="text-[9px] mt-0.5 truncate max-w-full"
-            style={{ color: isRest(dayInfo) ? HOLIDAY_COLOR : "var(--island-accent)" }}
-          >
+          <div className="text-[10px] truncate max-w-full" style={{ marginTop: 5, color: "var(--island-accent)" }}>
             {selFestival}
           </div>
         )}
-        <div className="flex items-center gap-1 mt-1">
-          {isRest(dayInfo) && <Badge text="休" tone="rest" />}
-          {isAdjustedWorkday(dayInfo) && <Badge text="班" tone="work" />}
-        </div>
+        {selBadge && (
+          <div
+            className="self-start text-[10px] truncate max-w-full"
+            style={{
+              marginTop: 8,
+              padding: "3px 8px",
+              borderRadius: 6,
+              background: selBadge.tone === "rest" ? "rgba(255,122,122,0.16)" : "rgba(255,207,107,0.16)",
+              color: selBadge.tone === "rest" ? "#ff9a9a" : "#ffcf6b",
+            }}
+          >
+            {selBadge.text}
+          </div>
+        )}
         {selGanzhi && (
-          <div className="text-[8.5px] mt-0.5 truncate max-w-full" style={{ color: muted, opacity: 0.5 }}>
+          <div className="text-[9px] truncate max-w-full" style={{ marginTop: 10, color: muted, opacity: 0.5 }}>
             {selGanzhi}
           </div>
         )}
+        <div className="text-[9px] truncate max-w-full" style={{ marginTop: 4, color: muted, opacity: 0.38 }}>
+          第 {selWeekNo} 周 · 年内第 {selDayNo} 天
+        </div>
       </div>
 
       {/* ===== 右：月历 ===== */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* 顶部：年月跳转 + 今天（「今天」紧贴「下一月」右侧） */}
-        <div className="flex items-center shrink-0 gap-0.5">
-          <div className="flex items-center gap-0.5">
-            <NavButton label="上一月" onClick={() => shiftMonth(-1)}>
-              <path d="M15 5l-7 7 7 7" />
-            </NavButton>
+        {/* 顶部：月份就是这一列最强的文字（15px 半粗），年/月本身就是两个可点的下拉
+            （外观交给 SelectBox），前后月紧贴其右；「今天」只在偏离当前月时出现。
+            原来是两个 11px 的裸下拉 + 18px 图标按钮，整行读起来像工具条而不是"标题"。 */}
+        <div className="flex items-center shrink-0" style={{ height: 26 }}>
+          <NavButton label="上一月" onClick={() => shiftMonth(-1)}>
+            <path d="M15 5l-7 7 7 7" />
+          </NavButton>
 
-            <SelectBox
-              ariaLabel="选择年份"
-              value={cursor.year}
-              onChange={(v) => jumpTo(v, cursor.month)}
+          <SelectBox
+            ariaLabel="选择年份"
+            value={cursor.year}
+            onChange={(v) => jumpTo(v, cursor.month)}
+          >
+            {yearOptions.map((y) => (
+              <option key={y} value={y} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
+                {y}年
+              </option>
+            ))}
+          </SelectBox>
+
+          <SelectBox
+            ariaLabel="选择月份"
+            value={cursor.month + 1}
+            onChange={(v) => jumpTo(cursor.year, v - 1)}
+          >
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <option key={m} value={m} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
+                {m}月
+              </option>
+            ))}
+          </SelectBox>
+
+          <NavButton label="下一月" onClick={() => shiftMonth(1)}>
+            <path d="M9 5l7 7-7 7" />
+          </NavButton>
+
+          {/* 「今天」紧贴「下一月」右侧（用户既定口径：不是行尾、不是月份左侧）；
+              且只在显示的年月 ≠ 系统当前年月时渲染（当前月隐藏、不占位） */}
+          {(cursor.year !== new Date().getFullYear() ||
+            cursor.month !== new Date().getMonth()) && (
+            <button
+              type="button"
+              onClick={goToday}
+              title="回到今天"
+              className="text-[10px] leading-none px-2 py-1 rounded-[6px] cursor-pointer shrink-0 ml-1.5"
+              style={{
+                background: "rgba(255,255,255,0.09)",
+                border: "none",
+                color: TEXT_PRIMARY,
+                transition: "background-color 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.18)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.09)";
+              }}
             >
-              {yearOptions.map((y) => (
-                <option key={y} value={y} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
-                  {y}年
-                </option>
-              ))}
-            </SelectBox>
-
-            <SelectBox
-              ariaLabel="选择月份"
-              value={cursor.month + 1}
-              onChange={(v) => jumpTo(cursor.year, v - 1)}
-            >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                <option key={m} value={m} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
-                  {m}月
-                </option>
-              ))}
-            </SelectBox>
-
-            <NavButton label="下一月" onClick={() => shiftMonth(1)}>
-              <path d="M9 5l7 7-7 7" />
-            </NavButton>
-
-            {/* 「今天」紧贴「下一月」右侧（用户最新要求：不是行尾、不是月份左侧）；
-                且只在显示的年月 ≠ 系统当前年月时渲染（当前月隐藏、不占位） */}
-            {(cursor.year !== new Date().getFullYear() ||
-              cursor.month !== new Date().getMonth()) && (
-              <button
-                type="button"
-                onClick={goToday}
-                title="回到今天"
-                className="text-[10px] leading-none px-1.5 py-1 rounded-[6px] cursor-pointer shrink-0 ml-0.5"
-                style={{
-                  background: "rgba(255,255,255,0.08)",
-                  border: "none",
-                  color: TEXT_PRIMARY,
-                  transition: "background-color 150ms ease",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.16)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                }}
-              >
-                今天
-              </button>
-            )}
-          </div>
+              今天
+            </button>
+          )}
         </div>
 
-        {/* 星期表头（白色系） */}
+        {/* 星期表头：比原来的 9px/高不透明度更收敛，别和日期数字抢读 */}
         <div
-          className="grid shrink-0 mt-0.5"
-          style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}
+          className="grid shrink-0"
+          style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginTop: 7 }}
         >
           {WEEKDAY_HEAD.map((w, i) => (
             <div
               key={w}
-              className="text-center text-[9px]"
-              style={{ color: TEXT_PRIMARY, opacity: i >= 5 ? 0.55 : 0.9 }}
+              className="text-center"
+              style={{
+                fontSize: 9.5,
+                color: i >= 5 ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.5)",
+              }}
             >
               {w}
             </div>
           ))}
         </div>
 
-        {/* 网格：6 行自适应 */}
+        {/* 网格：6 行自适应。语义全部落在格内，不再用角落小圆徽标
+            （原来一个月会出现 8~10 个彩色圆点，是这块最吵的一层）：
+              · 法定休息日 → 暖红色日号 + 极淡暖底
+              · 调休上班   → 副行显示「班」（琥珀色），代替那天的农历小字
+              · 今天       → 蓝底白字；选中 → 蓝色发丝环 */}
         <div
-          className="grid flex-1 min-h-0 mt-0.5"
+          className="grid flex-1 min-h-0"
           style={{
             gridTemplateColumns: "repeat(7, 1fr)",
             gridTemplateRows: `repeat(${Math.max(cells.length / 7, 1)}, 1fr)`,
             gap: 2,
+            marginTop: 5,
           }}
         >
           {cells.map((day, idx) => {
@@ -496,11 +546,12 @@ export default function CalendarPage() {
               selected.day === day;
             const festival = isFestivalText(info);
             const sub = smallText(info);
-            const legalRest = isLegalRest(info);
+            const rest = isLegalRest(info);
             const adjust = isAdjustedWorkday(info);
 
-            // 今天：蓝底白字；选中：蓝色描边（今天同时被选中则蓝底 + 外描边/发光）
-            const boxBackground = isToday ? ACCENT : "transparent";
+            // 今天：蓝底白字；选中：蓝色发丝环（今天同时被选中则蓝底 + 外描边/发光）
+            const restBg = "rgba(255,122,122,0.10)";
+            const boxBackground = isToday ? ACCENT : rest ? restBg : "transparent";
             let boxShadow = "none";
             if (isToday && isSelected) {
               boxShadow = `0 0 0 1.5px ${ACCENT}, 0 0 6px rgba(10,132,255,0.55)`;
@@ -531,68 +582,47 @@ export default function CalendarPage() {
                   if (!isToday) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
                 }}
                 onMouseLeave={(e) => {
-                  if (!isToday) e.currentTarget.style.background = "transparent";
+                  if (!isToday) e.currentTarget.style.background = rest ? restBg : "transparent";
                 }}
               >
                 <span
                   className="tabular-nums leading-none"
                   style={{
-                    fontSize: 10,
-                    fontWeight: isToday || isSelected ? 600 : 400,
-                    color: TEXT_PRIMARY,
+                    fontSize: 11,
+                    fontWeight: isToday || isSelected ? 600 : rest ? 600 : 400,
+                    // 休息日：暖红日号（原来的「休」圆徽标改由颜色承担）
+                    color: isToday ? TEXT_PRIMARY : rest ? HOLIDAY_COLOR : TEXT_PRIMARY,
                     opacity: isToday ? 1 : 0.92,
                   }}
                 >
                   {day}
                 </span>
-                {sub && (
+                {(adjust || sub) && (
                   <span
                     className="leading-none truncate max-w-full"
                     style={{
-                      fontSize: 7.5,
-                      marginTop: 1,
-                      // 节气/节日蓝色；该格是今天时白色；普通农历白色 65%
-                      color: isToday ? TEXT_PRIMARY : festival ? FESTIVAL_BLUE : TEXT_SUB,
+                      fontSize: 8,
+                      marginTop: 2,
+                      // 调休上班=琥珀「班」；节气/节日=蓝；该格是今天时白色；普通农历白色 55%
+                      color: isToday
+                        ? "rgba(255,255,255,0.85)"
+                        : adjust
+                          ? "#ffcf6b"
+                          : festival
+                            ? FESTIVAL_BLUE
+                            : TEXT_SUB,
                       opacity: isToday ? 1 : 0.95,
                     }}
                   >
-                    {sub}
+                    {adjust ? "班" : sub}
                   </span>
                 )}
-
-                {/* 右上角徽标：调休上班=红底白「班」；法定休息=蓝底白「休」 */}
-                {adjust && <CellBadge text="班" background={BADGE_WORK_BG} />}
-                {!adjust && legalRest && <CellBadge text="休" background={ACCENT} />}
               </button>
             );
           })}
         </div>
       </div>
     </div>
-  );
-}
-
-/** 月视图格子里右上角的小圆徽标（绝对定位，不参与排版） */
-function CellBadge({ text, background }: { text: string; background: string }) {
-  return (
-    <span
-      className="absolute flex items-center justify-center rounded-full"
-      style={{
-        // 放大到 14px、字号 9px（用户反馈原 11px/7px 看不清字）
-        top: 0,
-        right: 0,
-        width: 14,
-        height: 14,
-        background,
-        color: "#ffffff",
-        fontSize: 9,
-        lineHeight: 1,
-        fontWeight: 600,
-        pointerEvents: "none",
-      }}
-    >
-      {text}
-    </span>
   );
 }
 
@@ -614,14 +644,17 @@ function SelectBox({
         aria-label={ariaLabel}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="text-[11px] font-semibold cursor-pointer rounded-[4px]"
+        className="cursor-pointer"
         style={{
           appearance: "none",
           WebkitAppearance: "none",
           background: "transparent",
           border: "none",
           color: TEXT_PRIMARY,
-          padding: "0 9px 0 2px",
+          // 15px 半粗：年/月是这一列最强的文字（原来 11px，读起来像一条工具条的标签）
+          fontSize: 15,
+          fontWeight: 600,
+          padding: "0 12px 0 1px",
           outline: "none",
           textAlign: "center",
         }}
@@ -629,29 +662,17 @@ function SelectBox({
         {children}
       </select>
       <span
-        className="pointer-events-none absolute right-[2px] text-[7px] leading-none"
-        style={{ color: TEXT_SUB }}
+        className="pointer-events-none absolute leading-none"
+        style={{
+          right: 2,
+          top: "50%",
+          transform: "translateY(-50%)",
+          fontSize: 7.5,
+          color: "rgba(255,255,255,0.55)",
+        }}
       >
         ▾
       </span>
-    </span>
-  );
-}
-
-function Badge({ text, tone }: { text: string; tone: "rest" | "work" }) {
-  const rest = tone === "rest";
-  return (
-    <span
-      className="flex items-center justify-center rounded-[4px] text-[8px] leading-none"
-      style={{
-        width: 14,
-        height: 14,
-        color: rest ? HOLIDAY_COLOR : "var(--island-text-muted)",
-        background: rest ? "rgba(255,122,122,0.14)" : "rgba(255,255,255,0.08)",
-      }}
-      title={rest ? "休息日" : "调休上班"}
-    >
-      {text}
     </span>
   );
 }
@@ -673,8 +694,9 @@ function NavButton({
       onClick={onClick}
       className="flex items-center justify-center rounded-[6px] cursor-pointer"
       style={{
-        width: 18,
-        height: 18,
+        // 与 15px 的月份标题同一行，命中区给到 22px（原 18px 偏小）
+        width: 22,
+        height: 22,
         background: "transparent",
         border: "none",
         color: "var(--island-text)",
