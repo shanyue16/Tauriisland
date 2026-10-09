@@ -29,6 +29,8 @@ const TEXT_PRIMARY = "#ffffff";
 const TEXT_SUB = "rgba(255,255,255,0.65)";
 /** 节气/节日小字：亮蓝（比 accent 更亮，保证深色底上可读） */
 const FESTIVAL_BLUE = "#5aa9ff";
+/** 调休上班角标：红底白「班」（用户要求保留右上角角标，便于一眼扫出调休日） */
+const BADGE_WORK_BG = "#ff5a5f";
 /** 休息日暖红（日期英雄块的日号 / 月历里休息日的日号与底色） */
 const HOLIDAY_COLOR = "#ff7a7a";
 /** 年份下拉可跳范围：当前年 ±5 */
@@ -245,7 +247,7 @@ function dayOfYear(d: Date): number {
   return Math.round((d.getTime() - start.getTime()) / MS_PER_DAY) + 1;
 }
 
-export default function CalendarPage() {
+export default function CalendarPage({ visible = true }: { visible?: boolean }) {
   const today = useRef(new Date()).current;
   const [cursor, setCursor] = useState(() => ({
     year: today.getFullYear(),
@@ -378,7 +380,7 @@ export default function CalendarPage() {
           又和右边网格争注意力。现在给足一栏：日号 46px 是全页重心，
           "这一天是什么日子"自上而下依次读完（星期 → 日号 → 农历 → 节日 → 徽标 → 干支 → 年内进度）。 */}
       <div
-        className="shrink-0 flex flex-col justify-center overflow-hidden"
+        className="shrink-0 flex flex-col items-center justify-center text-center overflow-hidden"
         style={{
           width: 148,
           minWidth: 0,
@@ -412,7 +414,7 @@ export default function CalendarPage() {
         )}
         {selBadge && (
           <div
-            className="self-start text-[10px] truncate max-w-full"
+            className="text-[10px] truncate max-w-full"
             style={{
               marginTop: 8,
               padding: "3px 8px",
@@ -444,29 +446,24 @@ export default function CalendarPage() {
             <path d="M15 5l-7 7 7 7" />
           </NavButton>
 
-          <SelectBox
+          <DropMenu
             ariaLabel="选择年份"
             value={cursor.year}
+            options={yearOptions}
+            format={(y) => `${y}年`}
+            visible={visible}
             onChange={(v) => jumpTo(v, cursor.month)}
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
-                {y}年
-              </option>
-            ))}
-          </SelectBox>
+          />
 
-          <SelectBox
+          <DropMenu
             ariaLabel="选择月份"
             value={cursor.month + 1}
+            options={Array.from({ length: 12 }, (_, i) => i + 1)}
+            format={(m) => `${m}月`}
+            columns={3}
+            visible={visible}
             onChange={(v) => jumpTo(cursor.year, v - 1)}
-          >
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m} style={{ background: "#1a1d24", color: TEXT_PRIMARY }}>
-                {m}月
-              </option>
-            ))}
-          </SelectBox>
+          />
 
           <NavButton label="下一月" onClick={() => shiftMonth(1)}>
             <path d="M9 5l7 7-7 7" />
@@ -597,25 +594,27 @@ export default function CalendarPage() {
                 >
                   {day}
                 </span>
-                {(adjust || sub) && (
+                {sub && (
                   <span
                     className="leading-none truncate max-w-full"
                     style={{
                       fontSize: 8,
                       marginTop: 2,
-                      // 调休上班=琥珀「班」；节气/节日=蓝；该格是今天时白色；普通农历白色 55%
-                      color: isToday
-                        ? "rgba(255,255,255,0.85)"
-                        : adjust
-                          ? "#ffcf6b"
-                          : festival
-                            ? FESTIVAL_BLUE
-                            : TEXT_SUB,
+                      // 节气/节日=蓝；该格是今天时白色；普通农历白色 55%
+                      color: isToday ? "rgba(255,255,255,0.85)" : festival ? FESTIVAL_BLUE : TEXT_SUB,
                       opacity: isToday ? 1 : 0.95,
                     }}
                   >
-                    {adjust ? "班" : sub}
+                    {sub}
                   </span>
+                )}
+
+                {/* 右上角角标（用户要求保留：一个月里哪几天休、哪几天调休上班要能一眼扫出来） */}
+                {adjust && (
+                  <CellChip text="班" background={isToday ? "rgba(0,0,0,0.42)" : BADGE_WORK_BG} />
+                )}
+                {!adjust && rest && (
+                  <CellChip text="休" background={isToday ? "rgba(0,0,0,0.42)" : ACCENT} />
                 )}
               </button>
             );
@@ -626,54 +625,200 @@ export default function CalendarPage() {
   );
 }
 
-/** 顶部年月下拉（原生 select + 自定义深色外观与箭头） */
-function SelectBox({
-  value,
-  onChange,
-  ariaLabel,
-  children,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  ariaLabel: string;
-  children: React.ReactNode;
-}) {
+/**
+ * 月历格子右上角的「休 / 班」角标。
+ * 用户明确要求保留：一个月里哪几天休、哪几天调休上班，要能一眼扫出来。
+ * 做成 11px 高的小圆角牌（不是原来 14px 的圆点），醒目但不至于把格子塞满。
+ */
+function CellChip({ text, background }: { text: string; background: string }) {
   return (
-    <span className="relative flex items-center">
-      <select
+    <span
+      className="absolute flex items-center justify-center"
+      style={{
+        top: 1,
+        right: 1,
+        minWidth: 11,
+        height: 11,
+        padding: "0 2px",
+        borderRadius: 3,
+        background,
+        color: "#ffffff",
+        fontSize: 8,
+        lineHeight: 1,
+        fontWeight: 600,
+        pointerEvents: "none",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+/**
+ * 年月下拉（自绘，替代原生 <select>）。
+ * 原生 select 展开的那张列表由 Chromium 自己绘制，圆角/底色/阴影一律控制不了，
+ * 在深色玻璃岛里就是一块系统灰白面板。这里自绘浮层：12px 圆角 + 发丝描边 +
+ * 柔和阴影 + 6px 内边距；月份用 3 列网格（12 项一次铺满、不用滚），年份用单列
+ * 可滚列表（限高 168px —— 岛体是 overflow:hidden，浮层必须留在岛内）。
+ * 关闭时机：选中一项 / 点浮层外 / Esc / 离开日历页（visible=false）。
+ */
+function DropMenu({
+  ariaLabel,
+  value,
+  options,
+  format,
+  columns = 1,
+  visible,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: number;
+  options: number[];
+  format: (v: number) => string;
+  columns?: 1 | 3;
+  visible: boolean;
+  onChange: (v: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // 翻到音乐/通知页时收起，免得回到日历页还挂着一张旧菜单
+  useEffect(() => {
+    if (!visible) setOpen(false);
+  }, [visible]);
+
+  // 点浮层之外关闭；Esc 关闭并**拦下这次按键**——岛根节点的 Esc 会退出展开态，
+  // 菜单开着时按 Esc 只应该收菜单。岛上的键盘监听挂在 window 的冒泡阶段，
+  // 这里在 document 的捕获阶段先拿到并阻止继续传播。
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
         aria-label={ariaLabel}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="cursor-pointer"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center cursor-pointer"
         style={{
-          appearance: "none",
-          WebkitAppearance: "none",
-          background: "transparent",
           border: "none",
+          borderRadius: 7,
+          padding: "3px 7px",
+          background: open ? "rgba(255,255,255,0.12)" : "transparent",
           color: TEXT_PRIMARY,
-          // 15px 半粗：年/月是这一列最强的文字（原来 11px，读起来像一条工具条的标签）
+          // 15px 半粗：年/月是这一列最强的文字（原来 11px，读起来像工具条标签）
           fontSize: 15,
           fontWeight: 600,
-          padding: "0 12px 0 1px",
-          outline: "none",
-          textAlign: "center",
+          lineHeight: 1,
+          transition: "background-color 150ms ease",
+        }}
+        onMouseEnter={(e) => {
+          if (!open) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+        }}
+        onMouseLeave={(e) => {
+          if (!open) e.currentTarget.style.background = "transparent";
         }}
       >
-        {children}
-      </select>
-      <span
-        className="pointer-events-none absolute leading-none"
-        style={{
-          right: 2,
-          top: "50%",
-          transform: "translateY(-50%)",
-          fontSize: 7.5,
-          color: "rgba(255,255,255,0.55)",
-        }}
-      >
-        ▾
-      </span>
-    </span>
+        {format(value)}
+        <span
+          style={{
+            marginLeft: 5,
+            fontSize: 7.5,
+            color: "rgba(255,255,255,0.55)",
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform 160ms ease",
+          }}
+        >
+          ▾
+        </span>
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            marginTop: 6,
+            zIndex: 40,
+            width: columns === 3 ? 132 : 84,
+            maxHeight: 168,
+            overflowY: "auto",
+            overscrollBehavior: "contain",
+            padding: 6,
+            borderRadius: 12,
+            background: "rgba(30,32,38,0.98)",
+            border: "1px solid var(--island-border)",
+            boxShadow: "0 10px 26px rgba(0,0,0,0.55)",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: columns === 3 ? "repeat(3, 1fr)" : "1fr",
+              gap: 2,
+            }}
+          >
+            {options.map((v) => {
+              const activeOption = v === value;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  role="option"
+                  aria-selected={activeOption}
+                  onClick={() => {
+                    onChange(v);
+                    setOpen(false);
+                  }}
+                  className="flex items-center justify-center cursor-pointer tabular-nums"
+                  style={{
+                    height: 24,
+                    padding: "0 6px",
+                    border: "none",
+                    borderRadius: 7,
+                    background: activeOption ? "rgba(10,132,255,0.22)" : "transparent",
+                    color: activeOption ? "#ffffff" : "rgba(255,255,255,0.75)",
+                    fontSize: 12,
+                    fontWeight: activeOption ? 600 : 400,
+                    lineHeight: 1,
+                    transition: "background-color 140ms ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!activeOption) e.currentTarget.style.background = "rgba(255,255,255,0.09)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!activeOption) e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  {format(v)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

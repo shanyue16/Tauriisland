@@ -1049,7 +1049,7 @@ function ExpandedContent({
   // 三页同时 mounted，用 class 做透明度 + 轻微位移过渡（与 medium 态同机制）
   const pages: { key: string; node: React.ReactNode }[] = [
     { key: "music", node: <MusicDetailView data={musicData} lyrics={lyrics} /> },
-    { key: "calendar", node: <CalendarPage /> },
+    { key: "calendar", node: <CalendarPage visible={visible} /> },
     { key: "notification", node: <NotificationPage visible={visible} /> },
   ];
   const safePage = Math.min(Math.max(page, 0), pages.length - 1);
