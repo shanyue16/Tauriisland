@@ -336,7 +336,12 @@ export default function CalendarPage() {
   const selGanzhi = dayInfo?.ganzhi_day ? `${dayInfo.ganzhi_year ?? ""}年 ${dayInfo.ganzhi_day}日` : "";
 
   return (
-    <div className="w-full h-full flex gap-2.5 px-[14px] py-[10px]" style={{ color}}>
+    // 内边距口径 = 线框稿 expand 规格 `14px 18px`：
+    //   · 左右 18px 与展开态另两页对齐（音乐详情页 px-[18px]、通知页 header/list 18px），
+    //     原来这里是 14px，切到日历页时左右两边的留白会比另两页窄 4px。
+    //   · 上下 14px：底部那条居中横排页码指示器位于 bottom:3（点高 7px，占据约 3~10px），
+    //     原来的 10px 下边距让日历网格几乎贴到指示器上。
+    <div className="w-full h-full flex gap-2.5 px-[18px] py-[14px]" style={{ color }}>
       {/* ===== 左：单日卡片（本次不改其配色/布局） ===== */}
       {/* overflow-hidden + minWidth:0：卡宽固定 84px，内部大号日号/徽标/干支可能比
           内容盒更宽（居中时会向两侧溢出），这里裁到卡片圆角内，避免"最左边有内容

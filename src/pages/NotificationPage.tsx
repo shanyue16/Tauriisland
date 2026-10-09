@@ -132,11 +132,14 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
         顶部条：给列表一个明确的"头"，而不是让内容漂在岛里。
         用一条发丝分隔线（复用 --island-border）与列表分开；分隔线是**结构性**的
         （它划出标题栏与内容区），不是为了装饰。
+        上下内边距口径 = 线框稿 expand 规格的 14px（原为 11px，比展开态另两页
+        ——音乐详情 pt-[14px]、日历页 py-[14px]——各少 3px，切页时标题栏会往上跳）；
+        底部 8px 是标题与发丝线之间的距离，比外侧的 14px 紧，让分隔线更贴近文字。
       */}
       <div
         className="flex items-baseline justify-between shrink-0"
         style={{
-          padding: "11px 18px 8px",
+          padding: "14px 18px 8px",
           borderBottom: "1px solid var(--island-border)",
         }}
       >

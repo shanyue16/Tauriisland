@@ -16,9 +16,12 @@ export default function TimePage() {
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
 
   return (
-    // pr-[26px] 而不是对称的 14px：悬浮态右侧有一条**竖排页码指示器**（right:8），
-    // 右对齐内容（时间/温度）会紧贴到它旁边。多留的 12px 是给指示器的专用通道。
-    <div className="w-full h-full flex flex-col items-center justify-center pt-1 px-[14px] pr-[26px]"
+    // 内边距口径（悬浮态三个页统一）：垂直 py-1 = 线框稿 mini 规格的 4px；
+    // 水平左侧 14px 合规格，右侧 pr-[26px] 是因为有一条**竖排页码指示器**（right:8），
+    // 多留的 12px 是指示器专用通道，否则右对齐内容（时间/温度/时长）会紧贴上去。
+    // 原为 pt-1（只有上 4px、下 0）→ 内容被推低 2px，且与天气/音乐页的垂直内边距不一致，
+    // 切页时会有 2px 跳动；现统一为对称 py-1（居中，无偏移、无跳动）。
+    <div className="w-full h-full flex flex-col items-center justify-center py-1 px-[14px] pr-[26px]"
          style={{ color: "var(--island-text)" }}>
       <div className="font-semibold tabular-nums leading-tight">
         <span className="text-[22px]">{hh}</span>

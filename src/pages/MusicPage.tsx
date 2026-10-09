@@ -11,10 +11,14 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
+  // 加载态 / 空态 / 正常态的内边距口径必须一致（垂直 py-1 = 线框稿 mini 规格 4px）：
+  // 原来这两种非正常态只有 pt-1（上 4px、下 0），内容被推低 2px，从"加载中"切到
+  // 正常内容、或切到另外两个页时会看到 2px 跳动。右侧 pr-[26px] 是给竖排页码指示器
+  // （right:8）的专用通道。
   if (!data) {
     return (
       <div
-        className="w-full h-full flex items-center justify-center pt-1 px-[14px] pr-[26px]"
+        className="w-full h-full flex items-center justify-center py-1 px-[14px] pr-[26px]"
         style={{ color }}
       >
         <div className="text-[11px] opacity-60">加载中...</div>
@@ -25,7 +29,7 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
   if (!data.active) {
     return (
       <div
-        className="w-full h-full flex flex-col items-center justify-center pt-1 gap-0.5 px-[14px] pr-[26px]"
+        className="w-full h-full flex flex-col items-center justify-center py-1 gap-0.5 px-[14px] pr-[26px]"
         style={{ color }}
       >
         <MusicIcon size={18} style={{ color, opacity: 0.35 }} />
@@ -45,9 +49,10 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
   const currentLyric = getCurrentLyric(lyrics, positionMs);
 
   return (
+    // 内边距口径与加载态/空态一致：垂直 py-1 = 线框稿 mini 规格 4px；
     // 右侧留 26px：悬浮态竖排页码指示器在 right:8，进度时间（右对齐）不能贴上去
     <div
-      className="w-full h-full flex items-center gap-2 py-[3px] px-[14px] pr-[26px]"
+      className="w-full h-full flex items-center gap-2 py-1 px-[14px] pr-[26px]"
       style={{ color }}
     >
       {/* 封面缩略图 */}
