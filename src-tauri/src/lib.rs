@@ -7,11 +7,12 @@ mod notifications;
 mod smtc;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, LogicalPosition, LogicalSize, Manager, Runtime,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
 // ── Tauri 命令 ─────────────────────────────────────────────
@@ -136,7 +137,7 @@ async fn send_notification(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -170,40 +171,71 @@ pub fn run() {
                 let _ = window.show();
             }
 
-            // 系统托盘
-            setup_tray(app)?;
+            // 系统托盘：**失败绝不能带走整个应用**。
+            // 历史故障（症状"窗口闪一下就消失"）：窗口已经在上面 show() 出来了，随后
+            // `setup_tray(app)?` 的 `?` 把 Err 冒泡出 setup → run() 返回 Err →
+            // `.expect("error while building tauri application")` panic → 进程退出。
+            // 托盘图标只是个附属功能，它失败时打印一行警告继续跑。
+            if let Err(e) = setup_tray(app.handle()) {
+                eprintln!("[tray] 托盘初始化失败（应用继续运行，可从任务栏图标以外的方式使用）: {e}");
+            }
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    app.run(|app, event| match event {
+        // "所有窗口都关闭 → 退出"是 Tauri 的默认行为，但对托盘常驻的桌面小组件是错的：
+        // 岛一旦被系统/桌面合成器收走（事件日志实测：同刻 dwm.exe 在 dwmcore.dll 里
+        // APPCRASH，而本应用既无崩溃记录也无 WebView2 转储），进程会**静默**结束，
+        // 用户只能重启 —— 表现正是"窗口闪一下就消失"。
+        // 这里只拦"没有窗口了"这种自动退出；托盘「退出」走 app.exit(code)（code=Some），
+        // 以及 QUITTING 标记，都照常退出。
+        tauri::RunEvent::ExitRequested { api, code, .. } => {
+            if code.is_none() && !QUITTING.load(Ordering::SeqCst) {
+                api.prevent_exit();
+            }
+        }
+        // 窗口被系统销毁（合成器重启、被外部关闭）→ 自动重建，别让用户以为应用没了。
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == "main" => {
+            if !QUITTING.load(Ordering::SeqCst) {
+                eprintln!("[window] main 窗口被销毁 → 自动重建");
+                show_or_create_island(app);
+            }
+        }
+        _ => {}
+    });
 }
 
-fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
+/// 用户主动退出（托盘「退出」）时置位：此后不再拦 ExitRequested、也不重建窗口。
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItem::with_id(app, "show", "显示灵动岛", true, None::<&str>)?;
     let hide_item = MenuItem::with_id(app, "hide", "隐藏灵动岛", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
     let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
 
-    let _tray = TrayIconBuilder::with_id("main-tray")
+    let mut tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Tauriisland · 灵动岛")
-        .icon(app.default_window_icon().cloned().unwrap())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
+            "show" => show_or_create_island(app),
             "hide" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }
             }
             "quit" => {
+                // 先置位再退出：否则 ExitRequested 会拦下这次退出，窗口重建也会被触发
+                QUITTING.store(true, Ordering::SeqCst);
                 app.exit(0);
             }
             _ => {}
@@ -215,16 +247,74 @@ fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error:
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_or_create_island(tray.app_handle());
             }
-        })
-        .build(app)?;
+        });
+
+    // 图标可能是 None（配置里没有可用 png 时）。原来这里 `.unwrap()` 会直接 panic，
+    // 而它发生在窗口 show() 之后 —— 又是一次"闪一下就消失"。没有图标就不设图标。
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
 
     Ok(())
+}
+
+/// 显示岛；**窗口已经不存在时按 tauri.conf.json 的配置把它重建出来**。
+///
+/// 为什么需要重建：窗口一旦被系统销毁（合成器重启、被外部关闭等），
+/// `get_webview_window("main")` 就再也拿不到它，托盘「显示灵动岛」会变成一个
+/// 点了没反应的空操作 —— 用户只能重启应用。配合 `run()` 里的 `prevent_exit`，
+/// 岛被收走之后仍然可以从托盘找回。
+fn show_or_create_island(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+
+    // 必须与 tauri.conf.json 的 app.windows[0] 逐项一致：decorations / transparent /
+    // alwaysOnTop / skipTaskbar / shadow / min / max，少一项重建出来的岛就会变样
+    // （例如带系统边框、或无法置顶、或尺寸不受钳制）。
+    let (x, y) = island_initial_pos(app);
+    match WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("Tauriisland")
+        .inner_size(220.0, 48.0)
+        .position(x, y)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .visible(false)
+        .min_inner_size(100.0, 20.0)
+        .max_inner_size(600.0, 320.0)
+        .build()
+    {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        Err(e) => eprintln!("[window] 重建 main 窗口失败: {e}"),
+    }
+}
+
+/// 岛的首屏摆放：水平居中、y = 8（与 setup 分支里的初始摆放同一套算法）。
+fn island_initial_pos(app: &AppHandle) -> (f64, f64) {
+    let monitor = app
+        .get_webview_window("main")
+        .and_then(|w| w.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    if let Some(monitor) = monitor {
+        let scale = monitor.scale_factor();
+        let screen_w_logical = monitor.size().width as f64 / scale;
+        return ((screen_w_logical - 220.0) / 2.0, 8.0);
+    }
+    (100.0, 8.0)
 }
 
 #[allow(dead_code)]

@@ -4,6 +4,8 @@
 .venv/
 .vite/
 启动.bat
+启动-诊断.bat
+dev-run.log
 # Rust / Tauri 编译产物（必须排除）
 src-tauri/target/
 
