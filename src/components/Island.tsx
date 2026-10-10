@@ -225,7 +225,12 @@ export default function Island() {
   const getTargetPos = useCallback(
     (w: number) => {
       const screenW = window.screen.width;
-      const y = settings.style === "docked" ? 0 : 8;
+      // 悬浮：顶部留 8px。
+      // 贴边挂角：**岛体**顶边必须与屏幕顶边齐平（用户反馈"最上的边与桌面有一定距离"）。
+      //   注意展开态/最大态/通知提醒的窗口四周带 SHADOW_PAD 留白，此时窗口要整体上移
+      //   -SHADOW_PAD，岛体顶边才会落在 y=0；配合 innerStyle 的上边零内缩才真正贴边。
+      const expandedGeometry = state === "expanded" || state === "maximal" || alertItem !== null;
+      const y = settings.style === "docked" ? (expandedGeometry ? -SHADOW_PAD : 0) : 8;
       let x: number;
       switch (settings.horizontalPosition as HorizontalPosition) {
         case "left":
@@ -240,7 +245,7 @@ export default function Island() {
       }
       return { x, y };
     },
-    [settings.style, settings.horizontalPosition]
+    [settings.style, settings.horizontalPosition, state, alertItem]
   );
 
   // ====== 关键：带平滑动画的 OS 窗口尺寸/位置过渡 ======
@@ -752,11 +757,14 @@ export default function Island() {
 
   // 内层：岛主体
   // —— 四周内缩（内容不贴边）；展开态收紧到 3px
+  // —— 贴边挂角（docked）时**上边零内缩**：岛体顶边必须与窗口顶边（= 屏幕顶边）齐平，
+  //    否则顶部会残留一条 innerPad 的透明带（用户反馈的"最上的边与桌面有一定距离"）。
+  //    左右/下边仍保留 2px，底部圆角那圈发丝描边才不贴屏幕外沿。
   // —— 四态统一：同一圈浅色发丝描边（var(--island-border)）
   const innerPad = isExpandedLayout ? 3 : 2;
   const innerStyle: React.CSSProperties = {
     position: "absolute",
-    top: innerPad,
+    top: floating ? innerPad : 0,
     left: innerPad,
     right: innerPad,
     bottom: innerPad,
