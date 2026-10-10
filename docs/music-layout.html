@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Tauriisland · 音乐页三态布局（可直接调参）</title>
+<style>
+/* ============================================================================
+   ①  可调参数 —— 只改这一段就够了（右侧面板的滑块改的也是这些变量）
+   单位：展开态 px-[18px] pt-[16px] pb-[16px] 之类，对照 src/components/Island.tsx
+   ============================================================================ */
+:root{
+  /* --- 主题色（深色，对应 THEME_PRESETS.dark；右上角"切亮色"按钮换另一套） --- */
+  --theme-bg:#121214;
+  --theme-text:#ffffff;
+  --theme-muted:rgba(255,255,255,.65);
+  --theme-border:rgba(255,255,255,.12);
+  --surface-1:rgba(255,255,255,.05);
+  --surface-2:rgba(255,255,255,.08);
+  --track:rgba(255,255,255,.15);
+  --accent:#f472b6;          /* 有封面时取封面主色，这里用默认粉 */
+  --accent2:#60a5fa;
+  --page-bg:#0a0a0c;         /* 只是预览页的背景，不属于岛 */
+
+  /* --- 展开态（530×280，内容区 524×274） --- */
+  --pad-x:18px;              /* 左右内边距 */
+  --pad-y:16px;              /* 上下内边距 */
+  --gap:20px;                /* 左栏 / 右栏 间距 */
+  --cover:170px;             /* 封面边长 */
+  --cover-radius:16px;       /* 封面圆角 */
+  --radius:24px;             /* 岛体圆角（展开态 & 悬浮态） */
+  --fs-title:19px;           /* 歌名 */
+  --fs-artist:11.5px;        /* 歌手 · 专辑 */
+  --fs-lyric:11px;           /* 非当前歌词行 */
+  --fs-lyric-on:13px;        /* 当前歌词行 */
+  --lyric-gap:5px;           /* 歌词行间距 */
+  --track-h:5px;             /* 进度条高度 */
+  --thumb:9px;               /* 进度条游标圆点直径 */
+  --btn-size:38px;           /* 播放按钮直径 */
+  --wave-h:38px;             /* 折线（声音地板）高度 */
+
+  /* --- 悬浮态（74 高 · 圆角 24） --- */
+  --pad-xm:18px;             /* 左侧内边距 */
+  --pad-xm-r:26px;           /* 右侧：给 right:8 的竖排页码指示器留的通道 */
+  --fs-m-time:34px;
+
+  /* --- 失焦态（56 高 · 胶囊） --- */
+  --pad-mini:16px;           /* 左右内边距 */
+  --mini-cover:28px;         /* 小封面 */
+}
+
+/* 亮色主题：对应 THEME_PRESETS.light */
+body.light{
+  --theme-bg:#f5f5f7;
+  --theme-text:#1d1d1f;
+  --theme-muted:rgba(29,29,31,.55);
+  --theme-border:rgba(0,0,0,.12);
+  --surface-1:rgba(0,0,0,.04);
+  --surface-2:rgba(0,0,0,.06);
+  --track:rgba(0,0,0,.12);
+  --page-bg:#c9c9d0;
+}
+
+/* ============================================================================
+   ②  基础样式（不是给你调的，别动）
+   ============================================================================ */
+*{margin:0;padding:0;box-sizing:border-box;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body{background:var(--page-bg);color:var(--theme-text);padding:20px 306px 40px 22px;
+  transition:background 200ms ease}
+body.panel-off{padding-right:22px}
+h1{font-size:15px;font-weight:600;margin-bottom:4px}
+.hint{font-size:12px;color:#8b8b93;line-height:1.7;margin-bottom:18px}
+.hint code{font-family:Consolas,Menlo,monospace;font-size:11.5px;background:rgba(127,127,127,.18);
+  padding:1px 5px;border-radius:4px}
+.stage{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-start}
+.cell{display:flex;flex-direction:column;gap:8px}
+.cap{font-size:12px;color:#8b8b93}
+.cap b{color:var(--theme-text);font-weight:600}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* —— 岛体外壳：.glass 就是屏幕上的那块玻璃；inset = 内容层内缩 —— */
+.island{position:relative}
+.glass{position:absolute;border-radius:var(--radius);background:var(--theme-bg);
+  border:1px solid var(--theme-border);overflow:hidden;
+  box-shadow:0 2px 6px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.05)}
+
+/* ============================================================================
+   ③  展开态 —— 对应 src/components/Island.tsx 的 MusicDetailView
+   岛 530×280，.glass inset 3px（innerPad），.page 是那层 flex 容器
+   ============================================================================ */
+.expanded{width:530px;height:280px}
+.expanded .glass{inset:3px}
+.expanded .page{position:absolute;inset:0;padding:var(--pad-y) var(--pad-x);
+  display:flex;gap:var(--gap)}
+
+/* 左栏：封面 + 播放器源胶囊（justify-between 把胶囊压到栏底） */
+.mu-left{width:var(--cover);flex:0 0 auto;display:flex;flex-direction:column;justify-content:space-between}
+.mu-cover{width:var(--cover);height:var(--cover);border-radius:var(--cover-radius);
+  background:linear-gradient(135deg,#f472b6,#60a5fa);
+  box-shadow:0 0 0 1px rgba(255,255,255,.06),
+             0 0 22px 4px color-mix(in srgb,var(--accent) 22%,transparent),
+             0 10px 24px rgba(0,0,0,.45)}
+.mu-src{display:flex;align-items:center;gap:6px;align-self:flex-start;
+  font-size:10px;padding:4px 9px;border-radius:999px;
+  background:var(--surface-2);border:1px solid var(--theme-border);color:var(--theme-muted)}
+.mu-src i{width:5px;height:5px;border-radius:50%;background:#4ade80;flex:0 0 auto}
+
+/* 右栏：歌名 → 歌手 → 多行歌词(flex-1 居中) → 进度条+时间 → 控件 */
+.mu-right{position:relative;flex:1;min-width:0;display:flex;flex-direction:column}
+.mu-title{font-size:var(--fs-title);font-weight:600;line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mu-artist{margin-top:4px;font-size:var(--fs-artist);color:var(--theme-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mu-lyrics{position:relative;z-index:1;flex:1;min-height:0;margin-top:10px;
+  display:flex;flex-direction:column;justify-content:center;gap:var(--lyric-gap)}
+.ly{font-size:var(--fs-lyric);color:var(--theme-text);opacity:.24;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+.ly.d1{opacity:.42}
+.ly.on{font-size:var(--fs-lyric-on);font-weight:500;opacity:1}
+/* 歌词只显示 3 行时，砍掉最上/最下各一行（保持"当前行居中"） */
+body[data-lyr="3"] .mu-lyrics .ly:nth-child(1),
+body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
+
+.mu-deck{position:relative;z-index:1;margin-top:12px}
+.mu-track{position:relative;height:var(--track-h);border-radius:99px;background:var(--track)}
+.mu-fill{position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.mu-thumb{position:absolute;left:38%;top:50%;width:var(--thumb);height:var(--thumb);
+  border-radius:50%;background:#fff;transform:translate(-50%,-50%);
+  box-shadow:0 0 6px rgba(255,255,255,.5)}
+.mu-times{display:flex;justify-content:space-between;margin-top:5px;
+  font-size:10.5px;color:var(--theme-muted)}
+.mu-btns{display:flex;align-items:center;gap:6px;margin-top:12px;position:relative;z-index:1}
+.mu-btn{width:30px;height:30px;display:flex;align-items:center;justify-content:center;
+  color:var(--theme-text);opacity:.85}
+.mu-play{width:var(--btn-size);height:var(--btn-size);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);
+  box-shadow:0 0 10px color-mix(in srgb,var(--accent) 19%,transparent)}
+/* 折线关在右栏底部（不是贴岛体底边） */
+.mu-wave{position:absolute;left:0;right:0;bottom:0;height:var(--wave-h);z-index:0}
+
+/* 底部横排页码指示器：bottom:3，所以内容下边距要 ≥ 它 */
+.dots-h{position:absolute;left:0;right:0;bottom:3px;display:flex;justify-content:center;gap:5px;z-index:6}
+.dots-h i{width:5px;height:5px;border-radius:50%;background:#fff;opacity:.25;display:block}
+.dots-h i.on{width:7px;height:7px;margin-top:-1px;opacity:.95;
+  box-shadow:0 0 6px var(--accent-glow,rgba(255,255,255,.45))}
+
+/* ============================================================================
+   ④  悬浮态 —— 300×74，圆角 24（对应 TimePage / MusicPage / WeatherPage）
+   ============================================================================ */
+.medium{width:300px;height:74px}
+.medium .glass{inset:2px}
+.medium .page{position:absolute;inset:0;padding:4px var(--pad-xm-r) 4px var(--pad-xm);
+  display:flex;align-items:center;gap:10px}
+.m-time{font-size:var(--fs-m-time);font-weight:600;letter-spacing:-1px;line-height:1}
+.m-sub{font-size:10px;color:var(--theme-muted);margin-top:3px}
+/* 竖排页码指示器：right:8，垂直居中 */
+.dots-v{position:absolute;right:8px;top:0;bottom:0;display:flex;flex-direction:column;
+  justify-content:center;align-items:center;gap:4px}
+.dots-v i{width:5px;height:5px;border-radius:50%;background:#fff;opacity:.28;display:block}
+.dots-v i.on{width:7px;height:7px;opacity:.95}
+
+/* ============================================================================
+   ⑤  失焦态 —— 320×56 胶囊（圆角 = 高/2 = 28）
+   ============================================================================ */
+.minimal{width:320px;height:56px}
+.minimal .glass{inset:2px;border-radius:28px}
+.minimal .page{position:absolute;inset:0;padding:0 var(--pad-mini);display:flex;align-items:center;gap:10px}
+.mi-cover{width:var(--mini-cover);height:var(--mini-cover);border-radius:7px;flex:0 0 auto;
+  background:linear-gradient(135deg,#f472b6,#60a5fa)}
+.mi-tt{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mi-ar{font-size:10px;color:var(--theme-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mi-tm{font-size:10px;color:var(--theme-muted);margin-left:auto;flex:0 0 auto}
+
+/* ============================================================================
+   ⑥  调参面板（浮在右上角）
+   ============================================================================ */
+.panel{position:fixed;right:16px;top:16px;width:266px;max-height:calc(100vh - 32px);
+  overflow:auto;background:rgba(24,24,28,.96);color:#eee;border:1px solid rgba(255,255,255,.14);
+  border-radius:12px;padding:12px 14px;font-size:12px;z-index:99;
+  box-shadow:0 12px 30px rgba(0,0,0,.5)}
+.panel.hide .body{display:none}
+.panel .head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.panel .head h2{flex:1}
+.panel .head button{padding:3px 8px;margin:0}
+.panel .body{display:block}
+.panel h2{font-size:12px;font-weight:600;margin-bottom:8px;color:#fff}
+.panel .grp{margin:10px 0 6px;color:#9a9aa2;font-size:11px;letter-spacing:.3px}
+.row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.row label{flex:1;color:#c8c8ce;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row input[type=range]{width:96px;accent-color:#0a84ff}
+.row .val{width:44px;text-align:right;font-variant-numeric:tabular-nums;color:#fff}
+.panel button{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.16);
+  border-radius:7px;padding:5px 9px;font-size:11.5px;cursor:pointer;margin-right:6px}
+.panel button:hover{background:rgba(255,255,255,.2)}
+.panel select{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.16);
+  border-radius:6px;padding:3px 6px;font-size:11.5px}
+pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;padding:8px;font-size:11px;line-height:1.55;max-height:190px;overflow:auto;
+  white-space:pre-wrap;word-break:break-all;font-family:Consolas,Menlo,monospace;color:#bfe3ff}
+</style>
+</head>
+<body data-lyr="5">
+
+<h1>Tauriisland · 音乐页三态布局</h1>
+<div class="hint">
+  三块都是<b>真实尺寸</b>（530×280 / 300×74 / 320×56），改右上角滑块即时生效 —— 改完把面板底部的数值贴给我，我照抄进代码。<br>
+  对照代码：展开态 <code>src/components/Island.tsx · MusicDetailView</code>；悬浮态 <code>src/pages/MusicPage.tsx</code>；
+  失焦态 <code>Island.tsx · MinimalContent</code>。想直接改文件的话，改 <code>:root</code> 里带注释的那段变量即可。
+</div>
+
+<div class="stage">
+  <!-- ===== 展开态 ===== -->
+  <div class="cell">
+    <div class="cap"><b>展开态</b>　530 × 280 · 岛体圆角 <span id="capR">24</span>px · 内容内缩 3px</div>
+    <div class="island expanded">
+      <div class="glass"></div>
+      <div class="page">
+        <div class="mu-left">
+          <div class="mu-cover"></div>
+          <div class="mu-src"><i></i>网易云音乐</div>
+        </div>
+        <div class="mu-right">
+          <svg class="mu-wave" viewBox="0 0 298 38" preserveAspectRatio="none">
+            <defs><linearGradient id="wg" x1="0" x2="1">
+              <stop offset="0" stop-color="#f472b6" stop-opacity=".55"/>
+              <stop offset="1" stop-color="#60a5fa" stop-opacity=".55"/>
+            </linearGradient></defs>
+            <path d="M0 28 L16 25 L32 29 L48 20 L64 27 L80 13 L96 24 L112 18 L128 28 L144 22 L160 10 L176 21 L192 25 L208 15 L224 26 L240 19 L256 29 L272 23 L288 17 L298 24"
+                  fill="none" stroke="url(#wg)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="mu-title">起风了</div>
+          <div class="mu-artist">买辣椒也用券 · 起风了</div>
+          <div class="mu-lyrics">
+            <div class="ly">这一路上走走停停</div>
+            <div class="ly d1">顺着少年漂流的痕迹</div>
+            <div class="ly on">迈出车站的前一刻</div>
+            <div class="ly d1">竟有些犹豫</div>
+            <div class="ly">不禁笑这近乡情怯</div>
+          </div>
+          <div class="mu-deck">
+            <div class="mu-track"><div class="mu-fill"></div><div class="mu-thumb"></div></div>
+            <div class="mu-times tnum"><span>1:42</span><span>5:12</span></div>
+          </div>
+          <div class="mu-btns">
+            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></div>
+            <div class="mu-play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></div>
+            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></div>
+          </div>
+        </div>
+      </div>
+      <div class="dots-h"><i class="on"></i><i></i><i></i></div>
+    </div>
+  </div>
+
+  <!-- ===== 悬浮态 ===== -->
+  <div class="cell">
+    <div class="cap"><b>悬浮态</b>　300 × 74 · 圆角 24 · 右侧 26px 是指示器通道</div>
+    <div class="island medium">
+      <div class="glass"></div>
+      <div class="page">
+        <div style="flex:1;min-width:0">
+          <div class="m-time tnum">11:21</div>
+          <div class="m-sub">周五 · 10月9日 · 多云 21°</div>
+        </div>
+        <div class="dots-v"><i class="on"></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 失焦态 ===== -->
+  <div class="cell">
+    <div class="cap"><b>失焦态</b>　320 × 56 · 胶囊（圆角 = 高/2 = 28）</div>
+    <div class="island minimal">
+      <div class="glass"></div>
+      <div class="page">
+        <div class="mi-cover"></div>
+        <div style="min-width:0;flex:1">
+          <div class="mi-tt">起风了</div>
+          <div class="mi-ar">买辣椒也用券</div>
+        </div>
+        <div class="mi-tm tnum">1:42</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 调参面板 ===== -->
+<div class="panel">
+  <div class="head">
+    <h2>调参面板</h2>
+    <button id="collapseBtn">收起</button>
+  </div>
+  <div class="body">
+  <button id="themeBtn">切亮色</button>
+  <select id="lyrSel"><option value="5">歌词 5 行</option><option value="3">歌词 3 行</option></select>
+
+  <div class="grp">展开态 · 内边距</div>
+  <div class="row"><label>左右 pad-x</label><input type="range" data-var="--pad-x" data-unit="px" min="0" max="40" step="1" value="18"><span class="val" data-for="--pad-x"></span></div>
+  <div class="row"><label>上下 pad-y</label><input type="range" data-var="--pad-y" data-unit="px" min="0" max="40" step="1" value="16"><span class="val" data-for="--pad-y"></span></div>
+  <div class="row"><label>两栏间距 gap</label><input type="range" data-var="--gap" data-unit="px" min="0" max="40" step="1" value="20"><span class="val" data-for="--gap"></span></div>
+
+  <div class="grp">展开态 · 尺寸</div>
+  <div class="row"><label>封面 --cover</label><input type="range" data-var="--cover" data-unit="px" min="100" max="220" step="2" value="170"><span class="val" data-for="--cover"></span></div>
+  <div class="row"><label>封面圆角</label><input type="range" data-var="--cover-radius" data-unit="px" min="0" max="30" step="1" value="16"><span class="val" data-for="--cover-radius"></span></div>
+  <div class="row"><label>岛体圆角</label><input type="range" data-var="--radius" data-unit="px" min="0" max="30" step="1" value="24"><span class="val" data-for="--radius"></span></div>
+  <div class="row"><label>播放按钮</label><input type="range" data-var="--btn-size" data-unit="px" min="26" max="52" step="1" value="38"><span class="val" data-for="--btn-size"></span></div>
+  <div class="row"><label>进度条高</label><input type="range" data-var="--track-h" data-unit="px" min="2" max="12" step="1" value="5"><span class="val" data-for="--track-h"></span></div>
+  <div class="row"><label>游标直径</label><input type="range" data-var="--thumb" data-unit="px" min="0" max="16" step="1" value="9"><span class="val" data-for="--thumb"></span></div>
+  <div class="row"><label>折线高度</label><input type="range" data-var="--wave-h" data-unit="px" min="0" max="80" step="2" value="38"><span class="val" data-for="--wave-h"></span></div>
+
+  <div class="grp">展开态 · 字号</div>
+  <div class="row"><label>歌名</label><input type="range" data-var="--fs-title" data-unit="px" min="14" max="28" step="1" value="19"><span class="val" data-for="--fs-title"></span></div>
+  <div class="row"><label>歌手</label><input type="range" data-var="--fs-artist" data-unit="px" min="10" max="16" step="0.5" value="11.5"><span class="val" data-for="--fs-artist"></span></div>
+  <div class="row"><label>歌词(当前)</label><input type="range" data-var="--fs-lyric-on" data-unit="px" min="11" max="20" step="0.5" value="13"><span class="val" data-for="--fs-lyric-on"></span></div>
+  <div class="row"><label>歌词(其他)</label><input type="range" data-var="--fs-lyric" data-unit="px" min="9" max="16" step="0.5" value="11"><span class="val" data-for="--fs-lyric"></span></div>
+  <div class="row"><label>歌词行距</label><input type="range" data-var="--lyric-gap" data-unit="px" min="0" max="16" step="1" value="5"><span class="val" data-for="--lyric-gap"></span></div>
+
+  <div class="grp">悬浮态 / 失焦态</div>
+  <div class="row"><label>悬浮左内距</label><input type="range" data-var="--pad-xm" data-unit="px" min="8" max="40" step="1" value="18"><span class="val" data-for="--pad-xm"></span></div>
+  <div class="row"><label>悬浮右通道</label><input type="range" data-var="--pad-xm-r" data-unit="px" min="14" max="48" step="1" value="26"><span class="val" data-for="--pad-xm-r"></span></div>
+  <div class="row"><label>悬浮时间字号</label><input type="range" data-var="--fs-m-time" data-unit="px" min="20" max="46" step="1" value="34"><span class="val" data-for="--fs-m-time"></span></div>
+  <div class="row"><label>失焦左右内距</label><input type="range" data-var="--pad-mini" data-unit="px" min="8" max="40" step="1" value="16"><span class="val" data-for="--pad-mini"></span></div>
+  <div class="row"><label>失焦小封面</label><input type="range" data-var="--mini-cover" data-unit="px" min="20" max="40" step="1" value="28"><span class="val" data-for="--mini-cover"></span></div>
+
+  <pre id="dump"></pre>
+  </div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const dumpEl = document.getElementById("dump");
+
+  // 所有滑块：直接写 :root 上的 CSS 变量（和上面 :root 里那段是同一批）
+  document.querySelectorAll("input[type=range]").forEach((el) => {
+    const name = el.dataset.var;
+    const unit = el.dataset.unit || "";
+    const out = document.querySelector(`[data-for="${name}"]`);
+    const apply = () => {
+      root.style.setProperty(name, el.value + unit);
+      if (out) out.textContent = el.value + unit;
+      if (name === "--radius") document.getElementById("capR").textContent = el.value;
+      render();
+    };
+    el.addEventListener("input", apply);
+    apply();
+  });
+
+  // 主题 / 歌词行数
+  document.getElementById("themeBtn").addEventListener("click", (e) => {
+    document.body.classList.toggle("light");
+    e.currentTarget.textContent = document.body.classList.contains("light") ? "切深色" : "切亮色";
+  });
+  document.getElementById("lyrSel").addEventListener("change", (e) => {
+    document.body.dataset.lyr = e.target.value;
+  });
+  // 收起面板：右侧留白跟着让出来，免得三块岛被面板压住
+  document.getElementById("collapseBtn").addEventListener("click", (e) => {
+    const panel = document.querySelector(".panel");
+    panel.classList.toggle("hide");
+    document.body.classList.toggle("panel-off", panel.classList.contains("hide"));
+    e.currentTarget.textContent = panel.classList.contains("hide") ? "展开" : "收起";
+    render();
+  });
+
+  // 面板底部实时列出当前数值 —— 改完直接整段贴给我就行
+  function render() {
+    const names = [...document.querySelectorAll("input[type=range]")].map((el) => el.dataset.var);
+    const lines = names.map((n) => `${n}: ${getComputedStyle(root).getPropertyValue(n).trim()}`);
+    lines.push(`歌词行数: ${document.body.dataset.lyr}`);
+    lines.push(`主题: ${document.body.classList.contains("light") ? "light" : "dark"}`);
+    dumpEl.textContent = lines.join("\n");
+  }
+  render();
+</script>
+</body>
+</html>
