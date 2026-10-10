@@ -96,6 +96,22 @@ export function speedFactor(speed: AnimationSpeed): number {
 }
 
 /**
+ * 某个动效档位在当前"动画速度"下的**实际时长（ms）**。
+ *
+ * 所有动效都必须从这里取时长：窗口形变、内容层的淡入淡出、页内换页、提醒出入场、
+ * 圆角形变 —— 这样设置→交互→动画速度的三挡（慢/正常/快）才会**同时**作用于全部动效，
+ * 而不是只有窗口跟着变。
+ */
+export function motionMs(kind: keyof typeof MOTION, speed: AnimationSpeed): number {
+  return MOTION[kind] * speedFactor(speed);
+}
+
+/** 给 index.css 用的同一倍率（CSS 里写 calc(220ms * var(--motion-factor, 1))） */
+export function motionFactor(speed: AnimationSpeed): string {
+  return String(speedFactor(speed));
+}
+
+/**
  * 系统"减少动态效果"开关。
  *
  * 按无障碍口径：不是把动画全关掉，而是去掉"位移/缩放"这类会让前庭不适的运动，

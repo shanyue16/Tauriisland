@@ -1,5 +1,5 @@
 import { useSettings } from "../../stores/settings";
-import type { AnimationSpeed } from "../../types";
+import { ANIMATION_DURATION, type AnimationSpeed } from "../../types";
 
 const SPEEDS: { key: AnimationSpeed; label: string }[] = [
   { key: "slow", label: "慢" },
@@ -69,7 +69,13 @@ export default function InteractionSettings() {
       </div>
 
       <div>
-        <div className="text-[11px] opacity-60 mb-2">动画速度</div>
+        <div className="flex justify-between text-[11px] mb-2">
+          <span className="opacity-60">动画速度</span>
+          {/* 三挡的基准时长直接来自 ANIMATION_DURATION，和动效实际取时长是同一个源 */}
+          <span className="tabular-nums">
+            {ANIMATION_DURATION[settings.animationSpeed]}ms
+          </span>
+        </div>
         <div className="flex gap-1">
           {SPEEDS.map((s) => (
             <button

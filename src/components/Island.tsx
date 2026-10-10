@@ -16,7 +16,7 @@ import { isBlacklisted, type NotificationItem } from "../types/notification";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
 import { useCoverAccent } from "../hooks/useCoverAccent";
-import { MOTION, easeOut, prefersReducedMotion, speedFactor } from "../utils/motion";
+import { MOTION, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { controlMusic } from "../services/music";
@@ -343,7 +343,7 @@ export default function Island() {
       // ③ 减少动态效果时直接落位。
       const duration = prefersReducedMotion()
         ? 0
-        : MOTION[kind] * speedFactor(settings.animationSpeed);
+        : motionMs(kind, settings.animationSpeed);
 
       if (duration <= 0) {
         currentSizeRef.current = { w: targetW, h: targetH };
@@ -673,7 +673,7 @@ export default function Island() {
       setAlertLeaving(false);
       // 清掉上一条的实测高度：否则下一条提醒会先按旧高度弹、再跳一下
       setAlertItem(null);
-    }, MOTION.alertOut);
+    }, motionMs("alertOut", settings.animationSpeed));
     if (stillHovering) {
       clearTimers();
       if (state === "minimal") {
@@ -682,7 +682,7 @@ export default function Island() {
         }, settings.hoverDelay);
       }
     }
-  }, [state, settings.hoverDelay, clearTimers, setState]);
+  }, [state, settings.hoverDelay, settings.animationSpeed, clearTimers, setState]);
 
   /**
    * 提醒停留计时（以 5s 为底，用户可调）。
@@ -830,6 +830,17 @@ export default function Island() {
   const isExpandedLayout = isExpanded || state === "maximal" || alertActive;
 
   /**
+   * 供 index.css 使用的动效倍率。
+   *
+   * 纯 CSS 的过渡（提醒出入场、页内换页）写成 `calc(220ms * var(--motion-factor, 1))`，
+   * 于是「动画速度」三挡对这些过渡同样生效 —— 否则只有 JS 驱动的窗口形变会跟着变。
+   * 需要 `as` 断言：行内对象字面量会触发 React.CSSProperties 的多余属性检查。
+   */
+  const motionVars = {
+    "--motion-factor": motionFactor(settings.animationSpeed),
+  } as React.CSSProperties;
+
+  /**
    * 某个内容层当前是否应该可见。
    *
    * 弹出提醒时**所有常规层都要让位** —— 提醒层是 `inset:0` 的整块覆盖，而这些层是
@@ -851,8 +862,8 @@ export default function Island() {
   const layerMotion = (visible: boolean): React.CSSProperties => ({
     opacity: visible ? 1 : 0,
     pointerEvents: visible ? "auto" : "none",
-    transition: `opacity ${visible ? MOTION.layerIn : MOTION.layerOut}ms var(--ease-out)`,
-    transitionDelay: visible ? `${MOTION.layerInDelay}ms` : "0ms",
+    transition: `opacity ${motionMs(visible ? "layerIn" : "layerOut", settings.animationSpeed)}ms var(--ease-out)`,
+    transitionDelay: visible ? `${motionMs("layerInDelay", settings.animationSpeed)}ms` : "0ms",
   });
   const isDark = settings.theme === "dark";
 
@@ -868,7 +879,7 @@ export default function Island() {
     background: "transparent",
     cursor: "pointer",
     transition:
-      "border-radius 280ms cubic-bezier(0.2, 0.8, 0.2, 1), overflow 0ms",
+      `border-radius ${motionMs("expand", settings.animationSpeed)}ms var(--ease-out), overflow 0ms`,
   };
 
   // 内层：岛主体
@@ -926,12 +937,16 @@ export default function Island() {
     // 因此这里改成 hidden 不会吃掉那圈柔和阴影（四态仍统一为圆角+发丝描边+阴影）。
     overflow: "hidden",
     transition:
-      "border-radius 280ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 180ms ease, border-color 180ms ease",
+      `border-radius ${motionMs("expand", settings.animationSpeed)}ms var(--ease-out), background-color 180ms ease, border-color 180ms ease`,
   };
 
   return (
     <div
-      style={{ ...outerStyle, ...cssVars }}
+      style={{
+        ...outerStyle,
+        ...cssVars,
+        ...motionVars,
+      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onWheelCapture={handleWheel as unknown as React.WheelEventHandler<HTMLDivElement>}
@@ -1191,7 +1206,8 @@ function MediumContent({
           inset: 0,
           opacity: page === 0 ? 1 : 0,
           pointerEvents: page === 0 ? "auto" : "none",
-          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
+          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
+          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
         }}
       >
         <TimePage />
@@ -1203,7 +1219,8 @@ function MediumContent({
           inset: 0,
           opacity: page === 1 ? 1 : 0,
           pointerEvents: page === 1 ? "auto" : "none",
-          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
+          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
+          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
         }}
       >
         <WeatherPage data={weatherData} />
@@ -1215,7 +1232,8 @@ function MediumContent({
           inset: 0,
           opacity: page === 2 ? 1 : 0,
           pointerEvents: page === 2 ? "auto" : "none",
-          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
+          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
+          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
         }}
       >
         <MusicPage data={musicData} lyrics={lyrics} />

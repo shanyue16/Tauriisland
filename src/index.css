@@ -228,14 +228,16 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .alert-layer {
   opacity: 1;
   transform: translateY(0);
+  /* 时长统一乘以 --motion-factor（Island.tsx 按"动画速度"注入），
+     这样设置里的三挡也作用于纯 CSS 的这段过渡。 */
   transition:
-    opacity 220ms var(--ease-out),
-    transform 220ms var(--ease-out);
+    opacity calc(220ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(220ms * var(--motion-factor, 1)) var(--ease-out);
 }
 .alert-layer-leaving {
   opacity: 0;
   transform: translateY(-6px);
-  transition-duration: 140ms;
+  transition-duration: calc(140ms * var(--motion-factor, 1));
   pointer-events: none;
 }
 @starting-style {
@@ -268,10 +270,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .island-page {
   position: absolute;
   inset: 0;
-  /* 页内换页：透明度用强 ease-out，位移用强 ease-in-out（屏幕内移动） */
+  /* 页内换页：透明度用强 ease-out，位移用强 ease-in-out（屏幕内移动）；
+     时长同样跟随"动画速度"三挡（--motion-factor 由 Island.tsx 注入）。 */
   transition:
-    opacity 160ms var(--ease-out),
-    transform 200ms var(--ease-in-out);
+    opacity calc(160ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(200ms * var(--motion-factor, 1)) var(--ease-in-out);
   will-change: opacity, transform;
 }
 .island-page-active {
