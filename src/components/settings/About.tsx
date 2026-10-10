@@ -6,7 +6,7 @@ export default function About() {
       <div className="flex flex-col items-center py-4">
         <div
           className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
-          style={{ background: "rgba(255,255,255,0.1)" }}
+          style={{ background: "var(--surface-2)" }}
         >
           <span className="text-2xl">🏝️</span>
         </div>
@@ -17,7 +17,7 @@ export default function About() {
 
       <div
         className="rounded-lg p-3 text-[11px] opacity-60 leading-relaxed"
-        style={{ background: "rgba(255,255,255,0.04)" }}
+        style={{ background: "var(--surface-1)" }}
       >
         一个运行在 Windows 桌面顶部的灵动岛应用，参考 Apple Dynamic Island
         设计，提供悬浮胶囊和贴边挂角两种形态，聚合时间、通知、音乐播放、系统状态等信息。

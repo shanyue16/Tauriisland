@@ -16,6 +16,13 @@
   --slider-thumb-bg: #ffffff;
   --switch-track: rgba(255, 255, 255, 0.2);
   --switch-thumb-bg: #ffffff;
+  /* 通用语义面/状态色——运行时会按主题覆盖 */
+  --surface-1: rgba(255, 255, 255, 0.05);
+  --surface-2: rgba(255, 255, 255, 0.08);
+  --surface-3: rgba(255, 255, 255, 0.14);
+  --input-bg: rgba(0, 0, 0, 0.2);
+  --accent-glow: rgba(255, 255, 255, 0.45);
+  --state-info: #5aa9ff;
   /* 浮层（年月下拉 / 悬浮提示）——运行时会按主题覆盖 */
   --popover-bg: rgba(30, 32, 38, 0.98);
   --popover-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);

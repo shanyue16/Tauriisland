@@ -59,7 +59,7 @@ export default function PageIndicator({
               background: "var(--island-text)",
               opacity: active ? 0.95 : 0.25,
               boxShadow: active
-                ? "0 0 6px rgba(255,255,255,0.45), 0 0 1px rgba(255,255,255,0.6)"
+                ? "0 0 6px var(--accent-glow), 0 0 1px var(--accent-glow)"
                 : "none",
               cursor: onSelect ? "pointer" : "default",
               transition:

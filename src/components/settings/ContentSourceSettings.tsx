@@ -18,7 +18,7 @@ export default function ContentSourceSettings() {
       {/* 天气配置 */}
       <div
         className="rounded-lg p-4 space-y-3"
-        style={{ background: "rgba(255,255,255,0.05)" }}
+        style={{ background: "var(--surface-1)" }}
       >
         <div className="flex items-center justify-between">
           <span className="text-[12px] font-medium">天气</span>
@@ -39,8 +39,8 @@ export default function ContentSourceSettings() {
               }}
               className="flex-1 text-[12px] px-3 py-1.5 rounded-md outline-none"
               style={{
-                background: "rgba(0,0,0,0.2)",
-                border: "1px solid rgba(255,255,255,0.1)",
+                background: "var(--input-bg)",
+                border: "1px solid var(--island-border)",
                 color: "var(--island-text)",
               }}
             />
@@ -54,7 +54,7 @@ export default function ContentSourceSettings() {
       {/* 未来扩展预告 */}
       <div
         className="rounded-lg p-4 flex flex-col items-center gap-2 opacity-60"
-        style={{ background: "rgba(255,255,255,0.03)" }}
+        style={{ background: "var(--surface-1)" }}
       >
         <SparklesIcon size={20} className="opacity-80" />
         <div className="text-[12px]">即将推出</div>

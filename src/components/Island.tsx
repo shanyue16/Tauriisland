@@ -627,6 +627,13 @@ export default function Island() {
           "--slider-thumb-bg": "#ffffff",
           "--switch-track": "rgba(255,255,255,0.2)",
           "--switch-thumb-bg": "#ffffff",
+          // 通用语义面/状态色（各页面别再就地写 rgba(255,255,255,x)）
+          "--surface-1": "rgba(255,255,255,0.05)",
+          "--surface-2": "rgba(255,255,255,0.08)",
+          "--surface-3": "rgba(255,255,255,0.14)",
+          "--input-bg": "rgba(0,0,0,0.2)",
+          "--accent-glow": "rgba(255,255,255,0.45)",
+          "--state-info": "#5aa9ff",
           // 浮层（年月下拉 / 悬浮提示）：深色主题用比岛体略亮的深灰
           "--popover-bg": "rgba(30,32,38,0.98)",
           "--popover-shadow": "0 10px 26px rgba(0,0,0,0.55)",
@@ -650,6 +657,12 @@ export default function Island() {
           "--slider-thumb-bg": "#ffffff",
           "--switch-track": "rgba(0,0,0,0.15)",
           "--switch-thumb-bg": "#ffffff",
+          "--surface-1": "rgba(0,0,0,0.04)",
+          "--surface-2": "rgba(0,0,0,0.06)",
+          "--surface-3": "rgba(0,0,0,0.10)",
+          "--input-bg": "rgba(0,0,0,0.05)",
+          "--accent-glow": "rgba(0,0,0,0.22)",
+          "--state-info": "#0a6cff",
           "--popover-bg": "rgba(252,252,253,0.98)",
           "--popover-shadow": "0 10px 26px rgba(0,0,0,0.18)",
           // 日历语义色（浅色底上要用更深的同色系，浅红/浅蓝在近白底上会糊成一片）

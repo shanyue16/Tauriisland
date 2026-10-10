@@ -71,8 +71,8 @@ export default function WhitelistSettings() {
     lineHeight: 1,
     padding: "7px 12px",
     borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.08)",
+    border: "1px solid var(--island-border)",
+    background: "var(--surface-2)",
     color: "var(--island-text)",
     cursor: "pointer",
     whiteSpace: "nowrap",
@@ -83,7 +83,7 @@ export default function WhitelistSettings() {
       <h3 className="text-[13px] font-semibold mb-3 opacity-90">歌曲设置 - 白名单</h3>
 
       {/* ① 播放器白名单 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <div className="flex items-center justify-between">
           <span className="text-[12px] font-medium">播放器白名单</span>
           <span className="text-[11px] opacity-50">{list.length} 项</span>
@@ -103,8 +103,8 @@ export default function WhitelistSettings() {
                 style={{
                   padding: "5px 6px 5px 9px",
                   borderRadius: 999,
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--island-border)",
                 }}
               >
                 <span>{name}</span>
@@ -119,7 +119,7 @@ export default function WhitelistSettings() {
                     height: 14,
                     borderRadius: 999,
                     border: "none",
-                    background: "rgba(255,255,255,0.14)",
+                    background: "var(--surface-3)",
                     color: "var(--island-text)",
                     fontSize: 10,
                     lineHeight: 1,
@@ -134,7 +134,7 @@ export default function WhitelistSettings() {
       </div>
 
       {/* ② 添加播放器 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <span className="text-[12px] font-medium">添加播放器</span>
         <div className="text-[11px] opacity-55 leading-relaxed">
           手动输入播放器进程名（如 Spotify.exe），或自动从当前 SMTC 会话中检测。
@@ -150,8 +150,8 @@ export default function WhitelistSettings() {
             }}
             className="flex-1 text-[12px] px-3 py-1.5 rounded-md outline-none min-w-0"
             style={{
-              background: "rgba(0,0,0,0.2)",
-              border: "1px solid rgba(255,255,255,0.1)",
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
               color: "var(--island-text)",
             }}
           />
@@ -168,7 +168,7 @@ export default function WhitelistSettings() {
         {hint && (
           <div
             className="text-[11px]"
-            style={{ color: hint.tone === "ok" ? "#5aa9ff" : "rgba(255,255,255,0.6)" }}
+            style={{ color: hint.tone === "ok" ? "var(--state-info)" : "var(--island-text-muted)" }}
           >
             {hint.text}
           </div>
@@ -176,7 +176,7 @@ export default function WhitelistSettings() {
       </div>
 
       {/* ③ 获取播放进程 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <span className="text-[12px] font-medium">获取播放进程</span>
         <div className="text-[11px] opacity-55 leading-relaxed">
           从当前系统媒体会话读取正在播放的播放器标识，并加入白名单。

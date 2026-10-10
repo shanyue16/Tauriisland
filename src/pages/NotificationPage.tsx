@@ -34,8 +34,8 @@ function appHue(name: string): number {
   return h;
 }
 
-/** 应用 chip 底色：低饱和半透明，压得住深色玻璃又不会花 */
-function appChipStyle(name: string): React.CSSProperties {
+/** 应用 chip 底色：低饱和半透明，压得住深色玻璃又不会花；亮度按主题分支（浅底上 76% 亮度的字会糊） */
+function appChipStyle(name: string, isDark: boolean): React.CSSProperties {
   const hue = appHue(name);
   return {
     width: 17,
@@ -48,10 +48,14 @@ function appChipStyle(name: string): React.CSSProperties {
     fontSize: 9,
     lineHeight: 1,
     fontWeight: 600,
-    background: `hsla(${hue}, 42%, 55%, 0.20)`,
-    color: `hsl(${hue}, 62%, 76%)`,
-    // 极淡内描边，让 chip 在深色底上有边界但不抢眼
-    boxShadow: "inset 0 0 0 1px hsla(0, 0%, 100%, 0.07)",
+    background: isDark
+      ? `hsla(${hue}, 42%, 55%, 0.20)`
+      : `hsla(${hue}, 45%, 45%, 0.16)`,
+    color: isDark ? `hsl(${hue}, 62%, 76%)` : `hsl(${hue}, 55%, 34%)`,
+    // 极淡内描边，让 chip 在底色上有边界但不抢眼
+    boxShadow: isDark
+      ? "inset 0 0 0 1px hsla(0, 0%, 100%, 0.07)"
+      : "inset 0 0 0 1px hsla(0, 0%, 0%, 0.08)",
   };
 }
 
@@ -63,6 +67,8 @@ interface NotificationPageProps {
 export default function NotificationPage({ visible = true }: NotificationPageProps) {
   const { settings, updateSettings, setState } = useSettings();
   const { items, allItems, loading } = useNotifications({ visible });
+  // chip 的色相派生亮度是唯一需要按主题分支的地方，其余一律走 CSS 变量
+  const isDark = settings.theme !== "light";
 
   /** 展开正文的那条通知 id（长消息默认只显示 2 行，需要能看全） */
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
@@ -181,6 +187,7 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
           <Row
             key={item.id}
             item={item}
+            isDark={isDark}
             expandedText={expandedIds.has(item.id)}
             onToggleText={() => toggleExpanded(item.id)}
           />
@@ -192,10 +199,12 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
 
 function Row({
   item,
+  isDark,
   expandedText,
   onToggleText,
 }: {
   item: NotificationItem;
+  isDark: boolean;
   expandedText: boolean;
   onToggleText: () => void;
 }) {
@@ -214,7 +223,7 @@ function Row({
       style={{ position: "relative", padding: "9px 0 10px" }}
     >
       {/* 应用 chip：密集列表里唯一的扫读锚点（同应用永远同色） */}
-      <div style={appChipStyle(item.appName)} aria-hidden>
+      <div style={appChipStyle(item.appName, isDark)} aria-hidden>
         {chipChar}
       </div>
 
@@ -318,8 +327,8 @@ function EmptyState({
         style={{
           width: 40,
           height: 40,
-          background: "rgba(255,255,255,0.06)",
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
+          background: "var(--surface-1)",
+          boxShadow: "inset 0 0 0 1px var(--island-border)",
         }}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.6 }}>
@@ -355,7 +364,7 @@ function EmptyState({
             padding: "5px 12px",
             borderRadius: 999,
             border: "1px solid var(--island-border)",
-            background: "rgba(255,255,255,0.06)",
+            background: "var(--surface-1)",
             color: "var(--island-text)",
           }}
         >

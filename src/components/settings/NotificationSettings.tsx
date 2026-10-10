@@ -115,8 +115,8 @@ export default function NotificationSettings() {
       lineHeight: 1,
       padding: "7px 12px",
       borderRadius: 8,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(255,255,255,0.08)",
+      border: "1px solid var(--island-border)",
+      background: "var(--surface-2)",
       color: "var(--island-text)",
       cursor: "pointer",
       whiteSpace: "nowrap",
@@ -129,7 +129,7 @@ export default function NotificationSettings() {
       <h3 className="text-[13px] font-semibold mb-3 opacity-90">通知</h3>
 
       {/* ① 读取 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <span className="text-[12px] font-medium">读取系统通知</span>
         <ToggleRow
           label="读取通知"
@@ -168,7 +168,7 @@ export default function NotificationSettings() {
       </div>
 
       {/* ①.5 新通知提醒 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <span className="text-[12px] font-medium">新通知提醒</span>
         <ToggleRow
           label="弹出提醒"
@@ -198,7 +198,7 @@ export default function NotificationSettings() {
       </div>
 
       {/* ② 黑名单 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <div className="flex items-center justify-between">
           <span className="text-[12px] font-medium">不读取的应用</span>
           <span className="text-[11px] opacity-50">{list.length} 项</span>
@@ -219,8 +219,8 @@ export default function NotificationSettings() {
                 style={{
                   padding: "5px 6px 5px 9px",
                   borderRadius: 999,
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--island-border)",
                 }}
               >
                 <span className="truncate" style={{ maxWidth: 150 }}>
@@ -237,7 +237,7 @@ export default function NotificationSettings() {
                     height: 14,
                     borderRadius: 999,
                     border: "none",
-                    background: "rgba(255,255,255,0.14)",
+                    background: "var(--surface-3)",
                     color: "var(--island-text)",
                     fontSize: 10,
                     lineHeight: 1,
@@ -262,8 +262,8 @@ export default function NotificationSettings() {
             }}
             className="flex-1 text-[12px] px-3 py-1.5 rounded-md outline-none min-w-0"
             style={{
-              background: "rgba(0,0,0,0.2)",
-              border: "1px solid rgba(255,255,255,0.1)",
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
               color: "var(--island-text)",
             }}
           />
@@ -301,8 +301,8 @@ export default function NotificationSettings() {
                     maxWidth: 200,
                     padding: "5px 9px",
                     borderRadius: 999,
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "var(--surface-1)",
+                    border: "1px solid var(--island-border)",
                     color: "var(--island-text)",
                     opacity: exists(c.appId) ? 0.4 : 1,
                   }}
@@ -318,7 +318,7 @@ export default function NotificationSettings() {
         {hint && (
           <div
             className="text-[11px]"
-            style={{ color: hint.tone === "ok" ? "#5aa9ff" : "rgba(255,255,255,0.6)" }}
+            style={{ color: hint.tone === "ok" ? "var(--state-info)" : "var(--island-text-muted)" }}
           >
             {hint.text}
           </div>
@@ -326,7 +326,7 @@ export default function NotificationSettings() {
       </div>
 
       {/* ③ 发送 */}
-      <div className="rounded-lg p-4 space-y-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <span className="text-[12px] font-medium">发送通知</span>
         <div className="text-[11px] opacity-55 leading-relaxed">
           由本应用向系统发送通知。开发模式下通知归属的应用身份可能显示不准，

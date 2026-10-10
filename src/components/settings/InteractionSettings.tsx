@@ -79,11 +79,11 @@ export default function InteractionSettings() {
               style={{
                 background:
                   settings.animationSpeed === s.key
-                    ? "rgba(255,255,255,0.18)"
-                    : "rgba(255,255,255,0.05)",
+                    ? "var(--surface-3)"
+                    : "var(--surface-1)",
                 cursor: "pointer",
                 border: "none",
-                color: "#fff",
+                color: "var(--island-text)",
               }}
             >
               {s.label}
