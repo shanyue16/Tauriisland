@@ -815,7 +815,7 @@ export default function Island() {
             zIndex: 1,
           }}
         >
-          <MinimalContent weatherData={weatherData} musicData={musicData} />
+          <MinimalContent weatherData={weatherData} musicData={musicData} lyrics={lyrics} />
         </div>
         <div
           style={{
@@ -908,9 +908,11 @@ export default function Island() {
 function MinimalContent({
   weatherData,
   musicData,
+  lyrics,
 }: {
   weatherData: WeatherData | null;
   musicData: MusicData | null;
+  lyrics: LyricLine[];
 }) {
   const [time, setTime] = useState(new Date());
 
@@ -928,8 +930,9 @@ function MinimalContent({
 
   const hasActiveMusic = musicData?.active && musicData.title;
 
-  // —— 有音乐时：封面 + 歌名 + 时间 ——
+  // —— 有音乐时：封面 + 右侧两行（[歌名][歌手] / 当前歌词）+ 时间 ——
   if (hasActiveMusic) {
+    const miniLyric = getCurrentLyric(lyrics, (musicData.position || 0) * 1000);
     return (
       <div className="w-full h-full flex items-center gap-2.5 px-4" style={{ color }}>
         {/* 真实封面 (无则 EQ 占位) */}
@@ -960,12 +963,23 @@ function MinimalContent({
           )}
         </div>
 
-        {/* 歌名 + 艺术家 */}
-        <div className="flex flex-col flex-1 min-w-0 leading-tight">
-          <span className="text-[11px] font-medium truncate">{musicData.title || "未知曲目"}</span>
-          {musicData.artist && (
-            <span className="text-[9px] truncate" style={{ color: muted }}>{musicData.artist}</span>
-          )}
+        {/* 右侧两行（用户指定）：第一行 [歌名][歌手] 横排，第二行 当前歌词。
+            没有歌词时第二行退化成播放状态，保证两行骨架不变。 */}
+        <div className="flex flex-col flex-1 min-w-0 leading-tight gap-[1px]">
+          <div className="flex items-baseline gap-[6px] min-w-0">
+            <span className="text-[11px] font-medium truncate">{musicData.title || "未知曲目"}</span>
+            {musicData.artist && (
+              <span
+                className="text-[9px] truncate shrink-0 max-w-[45%]"
+                style={{ color: muted }}
+              >
+                {musicData.artist}
+              </span>
+            )}
+          </div>
+          <span className="text-[9.5px] truncate" style={{ color: muted, opacity: 0.95 }}>
+            {miniLyric?.text ?? (musicData.playing ? "♪ 正在播放" : "⏸ 已暂停")}
+          </span>
         </div>
 
         {/* 时间 */}
@@ -1239,7 +1253,8 @@ function MusicDetailView({
         className="w-full h-full relative flex flex-row gap-[20px] px-[18px] pt-[16px] pb-[16px]"
         style={{ zIndex: 1 }}
       >
-        {/* 左栏 */}
+        {/* 左栏：封面在上（媒体来源压在封面左下角）；控件贴栏底 —— 水平居中于封面、
+            垂直与右栏进度条落在同一条水平线上（用户要求）。 */}
         <div className="shrink-0 flex flex-col" style={{ width: 170 }}>
           {/* 封面 = 这一页唯一的重心，与折线同源的光晕 */}
           <div
@@ -1251,8 +1266,8 @@ function MusicDetailView({
               background: data.cover_url ? "transparent" : "var(--surface-1)",
               border: "1px solid var(--island-border)",
               boxShadow: `
-                0 0 0 1px rgba(255,255,255,0.06),
-                0 0 24px 4px ${accentColor}38,
+                0 0 0 1px ${accentColor}30,
+                0 0 30px 6px ${accentColor}4d,
                 0 10px 26px rgba(0,0,0,0.45)
               `,
             }}
@@ -1300,8 +1315,13 @@ function MusicDetailView({
             )}
           </div>
 
-          {/* 控件：移到封面下方（用户要求） */}
-          <div className="flex items-center gap-[6px]" style={{ marginTop: 14 }}>
+          {/* 控件：封面下方、贴栏底。justify-center = 与封面共用一条垂直中线（水平居中）；
+              marginTop:auto + marginBottom:2px 把它的垂直中心压到右栏进度条的中心线上
+              （进度条块高 23px、条本身中心距栏底 20.5px，控件高 38px → 底部留 2px）。 */}
+          <div
+            className="flex items-center justify-center gap-[6px]"
+            style={{ marginTop: "auto", marginBottom: 2 }}
+          >
             <button
               onClick={handlePrev}
               aria-label="上一首"
@@ -1317,8 +1337,8 @@ function MusicDetailView({
               style={{
                 width: 38, height: 38,
                 background: "var(--surface-2)",
-                border: `1px solid ${accentColor}40`,
-                boxShadow: `0 0 10px ${accentColor}30`,
+                border: `1px solid ${accentColor}70`,
+                boxShadow: `0 0 16px 2px ${accentColor}59`,
                 color: "var(--island-text)",
               }}
             >
@@ -1358,12 +1378,17 @@ function MusicDetailView({
 
           {/* 进度条 + 时间：时间紧贴条下（5px），"现在到哪了"一眼可读 */}
           <div className="relative mt-[12px]" style={{ zIndex: 1 }}>
-            <div className="w-full h-[5px] rounded-full relative" style={{ background: "var(--slider-track)" }}>
+            {/* 进度条：轨道与已播段都带封面同色光晕（与丝线、封面、播放键同源） */}
+            <div
+              className="w-full h-[5px] rounded-full relative"
+              style={{ background: "var(--slider-track)", boxShadow: `0 0 10px 1px ${accentColor}40` }}
+            >
               <div
                 className="absolute left-0 top-0 bottom-0 rounded-full"
                 style={{
                   width: `${progressPct}%`,
                   background: `linear-gradient(90deg, ${accentColor}, ${accentColor2})`,
+                  boxShadow: `0 0 8px ${accentColor}80`,
                   transition: "width 0.3s linear",
                 }}
               />

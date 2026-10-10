@@ -1,13 +1,13 @@
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
-import { getCurrentLyric } from "../services/lyrics";
 
 interface MusicPageProps {
   data: MusicData | null;
+  /** 悬浮态不再显示歌词（用户确认），仍保留该 prop 以保持调用方接口稳定 */
   lyrics: LyricLine[];
 }
 
-export default function MusicPage({ data, lyrics }: MusicPageProps) {
+export default function MusicPage({ data }: MusicPageProps) {
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
@@ -45,9 +45,6 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
   const timeStr = formatTime(data.position);
   const totalStr = duration > 0 ? formatTime(duration) : "—:—";
 
-  const positionMs = (data.position || 0) * 1000;
-  const currentLyric = getCurrentLyric(lyrics, positionMs);
-
   return (
     // 内边距口径与加载态/空态一致（垂直 py-1 = 线框稿 mini 规格 4px）；
     // 左侧 18px = 用户要求悬浮态内容别贴着窗口边缘（原 14px）；
@@ -74,7 +71,8 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
         </div>
       )}
 
-      {/* 信息区：四行 —— 歌名+时间 / 歌手 / 单句歌词 / 进度条 */}
+      {/* 信息区：三行 —— 歌名+时间 / 歌手 / 进度条
+          （悬浮态不放歌词：歌词只在展开态与失焦态出现，用户已确认） */}
       <div className="flex-1 min-w-0 flex flex-col gap-[2px]">
         {/* 第一行: 歌名 + 时间 */}
         <div className="flex items-baseline gap-2 min-w-0">
@@ -89,7 +87,7 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
           </div>
         </div>
 
-        {/* 第二行: 歌手（常驻一行，不再被歌词顶掉） */}
+        {/* 第二行: 歌手 */}
         <div
           className="text-[9.5px] leading-tight truncate max-w-full"
           style={{ color: muted, opacity: 0.9 }}
@@ -97,13 +95,7 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
           {data.artist || "未知艺术家"}
         </div>
 
-        {/* 第三行: 单句歌词（用户要求新增）—— 比歌手亮、比歌名淡，长歌词按容器宽度省略；
-            没有歌词时退化成播放状态提示。 */}
-        <div className="text-[10.5px] leading-tight truncate max-w-full" style={{ opacity: 0.95 }}>
-          {currentLyric ? currentLyric.text : data.playing ? "♪ 正在播放" : "⏸ 已暂停"}
-        </div>
-
-        {/* 第四行: 进度条 */}
+        {/* 第三行: 进度条 */}
         <div
           className="w-full h-[3px] rounded-full overflow-hidden flex-shrink-0"
           style={{ backgroundColor: "var(--slider-track)" }}

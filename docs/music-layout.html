@@ -107,8 +107,9 @@ h1{font-size:15px;font-weight:600;margin-bottom:4px}
 .mu-left{width:var(--cover);flex:0 0 auto;display:flex;flex-direction:column}
 .mu-cover{position:relative;width:var(--cover);height:var(--cover);border-radius:var(--cover-radius);
   background:linear-gradient(135deg,#f472b6,#60a5fa);
-  box-shadow:0 0 0 1px rgba(255,255,255,.06),
-             0 0 22px 4px color-mix(in srgb,var(--accent) 22%,transparent),
+  /* 边缘光晕：与丝线/播放键/进度条同源（都取封面主色 accent） */
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 19%,transparent),
+             0 0 30px 6px color-mix(in srgb,var(--accent) 30%,transparent),
              0 10px 24px rgba(0,0,0,.45)}
 .mu-src{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:5px;
   max-width:calc(100% - 20px);font-size:9.5px;padding:3px 8px;border-radius:6px;
@@ -133,7 +134,8 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(1),
 body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 
 .mu-deck{position:relative;z-index:1;margin-top:12px}
-.mu-track{position:relative;height:var(--track-h);border-radius:99px;background:var(--track)}
+.mu-track{position:relative;height:var(--track-h);border-radius:99px;background:var(--track);
+  box-shadow:0 0 10px 1px color-mix(in srgb,var(--accent) 25%,transparent)}
 .mu-fill{position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:99px;
   background:linear-gradient(90deg,var(--accent),var(--accent2))}
 .mu-thumb{position:absolute;left:38%;top:50%;width:var(--thumb);height:var(--thumb);
@@ -142,13 +144,16 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .mu-times{display:flex;justify-content:space-between;margin-top:5px;
   font-size:10.5px;color:var(--theme-muted)}
 /* 控件：在封面下方（不是与进度条同一行） */
-.mu-btns{display:flex;align-items:center;gap:6px;margin-top:14px;position:relative;z-index:1}
+/* 控件：贴栏底、水平居中于封面；marginTop:auto + marginBottom:2px 让它的垂直中心
+   落在右栏进度条的中心线上（进度条块高 23px、条中心距栏底 20.5px，控件高 38px） */
+.mu-btns{display:flex;align-items:center;justify-content:center;gap:6px;
+  margin-top:auto;margin-bottom:2px;position:relative;z-index:1}
 .mu-btn{width:30px;height:30px;display:flex;align-items:center;justify-content:center;
   color:var(--theme-text);opacity:.85}
 .mu-play{width:var(--btn-size);height:var(--btn-size);border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);
-  box-shadow:0 0 10px color-mix(in srgb,var(--accent) 19%,transparent)}
+  background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 44%,transparent);
+  box-shadow:0 0 16px 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 /* 折线不再是"右栏底部的声浪"，改成上面 .mf-bg 的三条丝状背景 */
 
 /* 底部横排页码指示器：bottom:3，所以内容下边距要 ≥ 它 */
@@ -161,7 +166,7 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
    ④  悬浮态 —— 340×74（默认值已从 300 加宽到 340，给单句歌词留位置），圆角 24
    音乐页四行：歌名+时间 / 歌手 / 单句歌词 / 进度条（对应 MusicPage.tsx）
    ============================================================================ */
-.medium{width:340px;height:74px}
+.medium{width:300px;height:74px}
 .medium .glass{inset:2px}
 .medium .page{position:absolute;inset:0;padding:4px var(--pad-xm-r) 4px var(--pad-xm);
   display:flex;align-items:center;gap:10px}
@@ -176,8 +181,6 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mm-time{flex:0 0 auto;font-size:9px;color:var(--theme-muted);opacity:.5}
 .mm-artist{font-size:9.5px;color:var(--theme-muted);opacity:.9;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mm-lyric{font-size:10.5px;opacity:.95;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mm-track{width:100%;height:3px;border-radius:99px;background:var(--track);overflow:hidden;flex:0 0 auto}
 .mm-fill{height:100%;width:38%;border-radius:99px;background:var(--accent)}
@@ -196,8 +199,12 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .mi-cover{width:var(--mini-cover);height:var(--mini-cover);border-radius:7px;flex:0 0 auto;
   background:linear-gradient(135deg,#f472b6,#60a5fa)}
 .mi-tt{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mi-ar{font-size:10px;color:var(--theme-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mi-ar{flex:0 0 auto;max-width:45%;font-size:10px;color:var(--theme-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mi-tm{font-size:10px;color:var(--theme-muted);margin-left:auto;flex:0 0 auto}
+/* 失焦态·音乐页：右侧两行 —— 第一行 [歌名][歌手]，第二行 歌词（用户指定） */
+.mi-info{display:flex;flex-direction:column;flex:1;min-width:0;gap:1px;line-height:1.2}
+.mi-row1{display:flex;align-items:baseline;gap:6px;min-width:0}
+.mi-ly{font-size:9.5px;color:var(--theme-muted);opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ============================================================================
    ⑥  调参面板（浮在右上角）
@@ -304,7 +311,7 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
 
   <!-- ===== 悬浮态（音乐页：四行，含新增的单句歌词） ===== -->
   <div class="cell">
-    <div class="cap"><b>悬浮态 · 音乐页</b>　340 × 74 · 圆角 24 · 右侧 26px 是指示器通道</div>
+    <div class="cap"><b>悬浮态 · 音乐页</b>　300 × 74 · 圆角 24 · 右侧 26px 是指示器通道（不放歌词）</div>
     <div class="island medium">
       <div class="glass"></div>
       <div class="page">
@@ -315,7 +322,6 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
             <span class="mm-time tnum">1:42/5:12</span>
           </div>
           <div class="mm-artist">买辣椒也用券</div>
-          <div class="mm-lyric">迈出车站的前一刻</div>
           <div class="mm-track"><div class="mm-fill"></div></div>
         </div>
         <div class="dots-v"><i class="on"></i><i></i><i></i></div>
@@ -330,9 +336,12 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
       <div class="glass"></div>
       <div class="page">
         <div class="mi-cover"></div>
-        <div style="min-width:0;flex:1">
-          <div class="mi-tt">起风了</div>
-          <div class="mi-ar">买辣椒也用券</div>
+        <div class="mi-info">
+          <div class="mi-row1">
+            <span class="mi-tt">起风了</span>
+            <span class="mi-ar">买辣椒也用券</span>
+          </div>
+          <div class="mi-ly">迈出车站的前一刻</div>
         </div>
         <div class="mi-tm tnum">1:42</div>
       </div>
