@@ -36,11 +36,22 @@
   --cal-work-pill-fg: #ffcf6b;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  user-select: none;
+/* ⚠️ 这个 reset 必须写在 @layer base 里面。
+   裸写（不套 @layer）的声明属于"未分层样式"，按 CSS 级联层规则**优先于任何 @layer**，
+   而 Tailwind v4 的 utilities 全部在 `@layer utilities` 里 —— 结果就是 `* { padding: 0 }`
+   把全应用所有 `px-* / py-* / p-* / pt-* / pb-*` 工具类**整体压掉**（同理 `margin: 0`
+   压掉所有 `m-* / mt-* / mb-*`）。表现就是：岛内文字/组件贴着岛体（甚至窗口）边缘，
+   改内边距类毫无反应 —— 只能用行内 style 或未分层的自定义 CSS 才生效。
+   实测（150% 缩放，展开态音乐页）：`pt-[16px]` 期望让歌名距窗口 31px，实际 18.7px（=无内边距）；
+   `gap-[20px]` 生效 → 说明只被压掉了 padding/margin 这两类。
+   放进 base 层后，utilities 层按层级顺序正常覆盖，所有间距一次性恢复。 */
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+  }
 }
 
 html,
