@@ -931,7 +931,7 @@ function MinimalContent({
   // —— 有音乐时：封面 + 歌名 + 时间 ——
   if (hasActiveMusic) {
     return (
-      <div className="w-full h-full flex items-center gap-2.5 px-3" style={{ color }}>
+      <div className="w-full h-full flex items-center gap-2.5 px-4" style={{ color }}>
         {/* 真实封面 (无则 EQ 占位) */}
         <div
           className="relative shrink-0 rounded-md overflow-hidden flex items-center justify-center"
@@ -981,7 +981,7 @@ function MinimalContent({
 
   // —— 无音乐：时间+星期 | 天气简述 ——
   return (
-    <div className="w-full h-full flex items-center justify-center gap-2 px-3 text-[12px] leading-none" style={{ color }}>
+    <div className="w-full h-full flex items-center justify-center gap-2 px-4 text-[12px] leading-none" style={{ color }}>
       <div className="flex items-center gap-1.5 shrink-0">
         <span className="font-medium tabular-nums">
           {hh}:{mm}
@@ -1163,7 +1163,7 @@ function MusicDetailView({
 
   if (!data?.active) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] pb-[9px]" style={{ color }}>
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] py-[16px]" style={{ color }}>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.3 }}>
           <path d="M9 18V5l12-2v13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -1207,37 +1207,21 @@ function MusicDetailView({
 
   return (
     <div className="w-full h-full relative overflow-hidden" style={{ color }}>
-      {/* 背景音频可视化：折线图退到控制台下方当"声音地板"（颜色仍与封面光晕同源）。
-          原来它铺在 46% 高度处、压在第一行内容底下；现在贴岛体底边、与内容同宽，
-          读数最少的一层，不与封面英雄争重心（原为 24 根柱状条，按用户要求改折线）。 */}
-      <div
-        className="absolute pointer-events-none"
-        style={{ left: 18, right: 18, bottom: 0, height: 40, zIndex: 0 }}
-      >
-        <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
-      </div>
-
-      {/* 内容层 = 两段式布局：
-          ① 封面英雄（180px 见方）+ 信息列（标题 / 艺术家·专辑 / 当前歌词）
-          ② 控制台（传送键 + 进度条 + 时间）
-          justify-between 把控制台压在底部，中间余量成为"封面 ↔ 控件"之间的呼吸；
-          底部 9px 内边距是给 bottom:3 的横排页码指示器预留的通道。 */}
-      <div
-        className="w-full h-full flex flex-col justify-between px-[18px] pt-[14px] pb-[9px] relative"
-        style={{ zIndex: 1 }}
-      >
-        {/* 第一行：封面英雄 + 信息列 */}
-        <div className="flex flex-row gap-[22px] shrink-0" style={{ height: 180 }}>
-          {/* 封面 = 这一页唯一的重心（原 84px 的"缩略图 + 大段空白"构图，
-              现在给它 180px 和与折线同源的光晕）。 */}
+      {/* 布局（用户要求重排）：左栏 = 封面 + 播放器源；右栏 = 歌名 / 歌手 / 多行歌词 /
+          进度条 / 时间 / 控件。四周留 16~18px —— 原实现折线贴岛体底边、控制台只留
+          pb-9px，看起来顶在窗口边缘上。 */}
+      <div className="w-full h-full flex flex-row gap-[20px] px-[18px] pt-[16px] pb-[16px]">
+        {/* 左栏：封面在上、播放器源徽标贴栏底（来源应用升为独立元素，不再压成封面角标） */}
+        <div className="shrink-0 flex flex-col justify-between" style={{ width: 170 }}>
+          {/* 封面 = 这一页唯一的重心，与折线同源的光晕 */}
           <div
             className="relative shrink-0 overflow-hidden"
             style={{
-              width: 180,
-              height: 180,
-              borderRadius: 18,
-              background: data.cover_url ? "transparent" : "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              width: 170,
+              height: 170,
+              borderRadius: 16,
+              background: data.cover_url ? "transparent" : "var(--surface-1)",
+              border: "1px solid var(--island-border)",
               boxShadow: `
                 0 0 0 1px rgba(255,255,255,0.06),
                 0 0 24px 4px ${accentColor}38,
@@ -1260,84 +1244,59 @@ function MusicDetailView({
               </div>
             )}
 
-            {/* 来源应用：原来占标题列的一行（9px 小字），现在压到封面左下角，
-                把整行宽度让给标题与艺术家。 */}
-            {data.app_name && (
-              <span
-                className="absolute"
-                style={{
-                  left: 10,
-                  bottom: 10,
-                  padding: "3px 7px",
-                  borderRadius: 5,
-                  fontSize: 9,
-                  letterSpacing: 0.2,
-                  background: "rgba(0,0,0,0.42)",
-                  color: "rgba(255,255,255,0.85)",
-                }}
-              >
-                {data.app_name}
-              </span>
-            )}
           </div>
 
-          {/* 信息列：标题是文字焦点、"正在唱的那句"紧贴其下，两者构成一个阅读块 */}
-          <div className="flex flex-col justify-center min-w-0 flex-1">
-            <div className="text-[18px] font-semibold leading-tight truncate">
-              {data.title || "未知曲目"}
-            </div>
-            <div className="text-[11.5px] truncate mt-[5px]" style={{ color: muted }}>
-              {data.artist || "未知艺术家"}
-              {data.album ? ` · ${data.album}` : ""}
-            </div>
-            <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
-          </div>
-        </div>
-
-        {/* 第二行：控制台 —— 传送键在左，进度条与时间在右共用同一条基线。
-            原来进度条只有 3px、时间挂在条下方，中间还隔着 flex 间距，
-            看起来像两个不相干的零件；现在加粗到 5px + 白色游标圆点，
-            时间紧贴条下（5px），"现在到哪了"一眼可读。 */}
-        <div className="flex flex-row items-center gap-4">
-          <div className="flex items-center justify-center gap-1.5 shrink-0">
-            <button
-              onClick={handlePrev}
-              aria-label="上一首"
-              className="flex items-center justify-center p-1.5 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
-              style={{ background: "none", border: "none" }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-            </button>
-            <button
-              onClick={handlePlayPause}
-              aria-label={data.playing ? "暂停" : "播放"}
-              className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+          {/* 播放器源：独立徽标（原先是压在封面左下角的小角标，现在是左栏的收尾元素）。
+              左侧小圆点跟随播放状态：在播=绿、暂停=灰。 */}
+          {data.app_name && (
+            <span
+              className="self-start flex items-center gap-[6px] max-w-full"
               style={{
-                width: 38, height: 38,
-                background: "rgba(255,255,255,0.12)",
-                border: `1px solid ${accentColor}40`,
-                boxShadow: `0 0 10px ${accentColor}30`,
-                color: "#fff",
+                padding: "4px 9px",
+                borderRadius: 999,
+                fontSize: 10,
+                letterSpacing: 0.2,
+                background: "var(--surface-2)",
+                border: "1px solid var(--island-border)",
+                color: muted,
               }}
             >
-              {data.playing ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              )}
-            </button>
-            <button
-              onClick={handleNext}
-              aria-label="下一首"
-              className="flex items-center justify-center p-1.5 text-white/85 hover:text-white hover:scale-110 active:scale-95 transition-all cursor-pointer"
-              style={{ background: "none", border: "none" }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-            </button>
+              <i
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  flex: "0 0 auto",
+                  background: data.playing ? "#4ade80" : "rgba(127,127,127,0.6)",
+                }}
+              />
+              <span className="truncate">{data.app_name}</span>
+            </span>
+          )}
+        </div>
+
+        {/* 右栏：歌名（文字焦点）→ 歌手·专辑 → 多行歌词（flex-1，垂直居中）→
+            进度条 + 时间 → 控件。折线关在本栏底部当"声音地板"，不再贴岛体底边。 */}
+        <div className="relative flex-1 min-w-0 flex flex-col">
+          <div
+            className="absolute pointer-events-none"
+            style={{ left: 0, right: 0, bottom: 0, height: 38, zIndex: 0 }}
+          >
+            <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
           </div>
 
-          <div className="flex-1 min-w-0">
-            <div className="w-full h-[5px] rounded-full relative" style={{ background: "rgba(255,255,255,0.15)" }}>
+          <div className="text-[19px] font-semibold leading-tight truncate" style={{ zIndex: 1 }}>
+            {data.title || "未知曲目"}
+          </div>
+          <div className="text-[11.5px] truncate mt-[4px]" style={{ color: muted, zIndex: 1 }}>
+            {data.artist || "未知艺术家"}
+            {data.album ? ` · ${data.album}` : ""}
+          </div>
+          <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
+
+          {/* 进度条 + 时间：时间紧贴条下（5px），"现在到哪了"一眼可读 */}
+          <div className="relative mt-[12px]" style={{ zIndex: 1 }}>
+            <div className="w-full h-[5px] rounded-full relative" style={{ background: "var(--slider-track)" }}>
               <div
                 className="absolute left-0 top-0 bottom-0 rounded-full"
                 style={{
@@ -1363,11 +1322,50 @@ function MusicDetailView({
             </div>
             <div
               className="flex justify-between mt-[5px]"
-              style={{ fontSize: 10, color: muted, fontVariantNumeric: "tabular-nums" }}
+              style={{ fontSize: 10.5, color: muted, fontVariantNumeric: "tabular-nums" }}
             >
               <span>{formatTime(data.position)}</span>
               <span>{hasRealDuration ? formatTime(data.duration) : "—:—"}</span>
             </div>
+          </div>
+
+          {/* 控件：上一首 / 播放暂停 / 下一首（原先是与进度条挤在同一行的左侧，
+              现在独立成行、并给 12px 与进度条的间隔） */}
+          <div className="flex items-center gap-[6px] mt-[12px]" style={{ zIndex: 1 }}>
+            <button
+              onClick={handlePrev}
+              aria-label="上一首"
+              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button
+              onClick={handlePlayPause}
+              aria-label={data.playing ? "暂停" : "播放"}
+              className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+              style={{
+                width: 38, height: 38,
+                background: "var(--surface-2)",
+                border: `1px solid ${accentColor}40`,
+                boxShadow: `0 0 10px ${accentColor}30`,
+                color: "var(--island-text)",
+              }}
+            >
+              {data.playing ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              )}
+            </button>
+            <button
+              onClick={handleNext}
+              aria-label="下一首"
+              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -1394,27 +1392,32 @@ function LyricsBlock({
       )
     : null;
 
-  // 无歌词 → 一行状态（新布局里歌词是标题下方的一小段，不再占一块居中区域）
+  // 无歌词 → 一行状态，但仍占据歌词区（保证有/无歌词时"歌名在顶、控制在底"的骨架不变）
   if (lyrics.length === 0) {
     return (
-      <div className="mt-[14px] text-[11px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+      <div
+        className="flex-1 min-h-0 mt-[10px] flex items-center text-[11px]"
+        style={{ color: "var(--island-text-muted)" }}
+      >
         {playing ? "♪ 正在播放 · 等待歌词…" : "⏸ 已暂停 · 等待歌词…"}
       </div>
     );
   }
 
-  // 显示上一行、当前行、下一行
-  const startIdx = Math.max(0, (currentIdx ?? 0) - 1);
-  const endIdx = Math.min(lyrics.length, startIdx + 3);
+  // 多行歌词（用户要求）：当前行上下各两行、共 5 行；越远的行越小越淡，
+  // 当前行最大最亮 —— 不用滚动就能看出"唱到哪了"。
+  const cur = currentIdx ?? 0;
+  const startIdx = Math.max(0, cur - 2);
+  const endIdx = Math.min(lyrics.length, startIdx + 5);
   const nearby = lyrics.slice(startIdx, endIdx);
 
   return (
-    // 歌词左对齐并紧贴标题列：与左侧封面构成"图 + 文"的整块阅读区。
-    // （原实现是居中对齐，与封面的左轴、信息列的左轴互相打架，
-    //   而且四面留白让三行字看起来像漂在空里。）
-    <div className="mt-[14px] flex flex-col gap-[5px] min-w-0">
+    // 歌词左对齐、占据标题与进度条之间的弹性区并垂直居中：
+    // 与左侧封面构成"图 + 文"的整块阅读区（原实现是居中对齐，与封面的左轴打架）。
+    <div className="flex-1 min-h-0 mt-[10px] flex flex-col justify-center gap-[5px] min-w-0">
       {nearby.map((line, i) => {
-        const isCurrent = startIdx + i === currentIdx;
+        const dist = Math.abs(startIdx + i - cur);
+        const isCurrent = dist === 0;
         return (
           <div
             key={`${startIdx + i}-${line.time_ms}`}
@@ -1422,8 +1425,9 @@ function LyricsBlock({
             style={{
               fontSize: isCurrent ? 13 : 11,
               fontWeight: isCurrent ? 500 : 400,
-              color: isCurrent ? "#ffffff" : "rgba(255,255,255,0.32)",
-              transition: "color 200ms ease, font-size 200ms ease",
+              color: "var(--island-text)",
+              opacity: isCurrent ? 1 : dist === 1 ? 0.42 : 0.24,
+              transition: "color 200ms ease, font-size 200ms ease, opacity 200ms ease",
               lineHeight: 1.3,
             }}
           >

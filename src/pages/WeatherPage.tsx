@@ -11,7 +11,7 @@ export default function WeatherPage({ data }: WeatherPageProps) {
   if (!data) {
     return (
       <div
-        className="w-full h-full flex items-center justify-center py-1 px-[14px] pr-[26px]"
+        className="w-full h-full flex items-center justify-center py-1 px-[18px] pr-[26px]"
         style={{ color }}
       >
         <div className="text-[11px] opacity-60">加载中...</div>
@@ -26,10 +26,11 @@ export default function WeatherPage({ data }: WeatherPageProps) {
 
   return (
     // 内边距口径（悬浮态三个页统一）：垂直 py-1 = 线框稿 mini 规格 4px，且左右对称，
-    // 内容垂直居中不会偏移；右侧保留 pr-[26px] 给竖排页码指示器（right:8）让出通道。
+    // 内容垂直居中不会偏移；左侧 18px（原 14px，用户要求别贴着窗口边缘），
+    // 右侧 pr-[26px] 给竖排页码指示器（right:8）让出通道。
     // 原为 pt-1 pb-0.5（上 4px 下 2px）→ 内容整体偏上，且与加载态/音乐页不一致。
     <div
-      className="w-full h-full flex items-center justify-center gap-2 py-1 px-[14px] pr-[26px]"
+      className="w-full h-full flex items-center justify-center gap-2 py-1 px-[18px] pr-[26px]"
       style={{ color }}
     >
       {/* 今日列 */}
