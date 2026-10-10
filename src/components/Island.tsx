@@ -66,8 +66,20 @@ const MINIMAL_W_WITH_MUSIC = 320;
  * 现在窗口 = 岛本体 + 两侧留白，阴影有空间自然扩散。
  */
 const SHADOW_PAD = 12;
-const MAXIMAL_W = 520;
-const MAXIMAL_H = 280;
+/**
+ * 最大态（设置页）尺寸 = 展开态尺寸（**含四周 SHADOW_PAD 留白**）。
+ *
+ * 用户要求：「最大态(设置页)的尺寸改为与展开态相同」。所以这里直接从展开态常量推导，
+ * 窗口 554×304、岛体 530×280 —— 与展开态逐像素一致；从展开态滚进设置页时窗口尺寸
+ * 完全不变（不再有 520→554 的跳变）。
+ *
+ * ⚠️ 光把窗口改大不够：必须让 maximal 也走 `isExpandedLayout` 那套几何
+ *    （outerStyle.inset=SHADOW_PAD、innerPad=3），否则窗口变大而岛体尺寸不变，
+ *    圆角岛四周会露出一圈透明留白。
+ * ⚠️ 窗口高度 304 仍在 tauri.conf.json 的 maxHeight=320 之内，不会被系统钳掉。
+ */
+const MAXIMAL_W = EXPANDED_W + SHADOW_PAD * 2;
+const MAXIMAL_H = EXPANDED_H + SHADOW_PAD * 2;
 
 const appWindow = getCurrentWindow();
 
@@ -200,7 +212,10 @@ export default function Island() {
     }
     if (state === "minimal") return { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H };
     if (state === "medium") return { w: settings.mediumWidth, h: MEDIUM_H };
-    if (state === "expanded") return { w: EXPANDED_W + SHADOW_PAD * 2, h: EXPANDED_H + SHADOW_PAD * 2 };
+    // 展开态与最大态（设置页）尺寸完全相同 —— 同一个岛体 + 同一圈留白
+    if (state === "expanded" || state === "maximal") {
+      return { w: EXPANDED_W + SHADOW_PAD * 2, h: EXPANDED_H + SHADOW_PAD * 2 };
+    }
     return { w: MAXIMAL_W, h: MAXIMAL_H };
   };
 
@@ -699,12 +714,16 @@ export default function Island() {
   // 状态标记（提前声明，outerStyle/innerStyle 都要用到）
   const isExpanded = state === "expanded";
   /**
-   * 布局上是否按"展开态"处理 —— 展开态**或**正在弹新通知提醒。
+   * 布局上是否按"展开态"处理 —— 展开态、最大态（设置页）**或**正在弹新通知提醒。
+   *
+   * 三者共用同一套几何：外层窗口四周留 SHADOW_PAD 留白、岛体内缩 3px。
+   * 最大态跟着展开态走，是为了让设置页与展开页**逐像素同尺寸**（见 MAXIMAL_W/H 注释），
+   * 进出设置页时窗口不再缩放。
    *
    * 提醒借用展开态的留白/阴影/圆角（SHADOW_PAD 那套规则必须一起用，否则阴影会被
    * 窗口边界裁成硬边，就是之前那个"长方形黑边"），但 `state` 与用户页签都不变。
    */
-  const isExpandedLayout = isExpanded || alertItem !== null;
+  const isExpandedLayout = isExpanded || state === "maximal" || alertItem !== null;
 
   /**
    * 某个内容层当前是否应该可见。
