@@ -258,7 +258,14 @@ export default function Island() {
       //   注意展开态/最大态/通知提醒的窗口四周带 SHADOW_PAD 留白，此时窗口要整体上移
       //   -SHADOW_PAD，岛体顶边才会落在 y=0；配合 innerStyle 的上边零内缩才真正贴边。
       const expandedGeometry = state === "expanded" || state === "maximal" || alertActive;
-      const y = settings.style === "docked" ? (expandedGeometry ? -SHADOW_PAD : 0) : 8;
+      // 垂直微调（settings.offsetY）**只作用于悬浮胶囊**：贴边挂角的定义就是贴住屏幕顶边，
+      // 它必须忽略这个值（否则"贴边"就不再是贴边了）—— 见设置→位置面板的提示。
+      const y =
+        settings.style === "docked"
+          ? expandedGeometry
+            ? -SHADOW_PAD
+            : 0
+          : 8 + settings.offsetY;
       let x: number;
       switch (settings.horizontalPosition as HorizontalPosition) {
         case "left":
@@ -271,9 +278,10 @@ export default function Island() {
         default:
           x = (screenW - w) / 2;
       }
-      return { x, y };
+      // 水平微调：两种形态都生效（"贴边"只管顶边，不限制水平）
+      return { x: x + settings.offsetX, y };
     },
-    [settings.style, settings.horizontalPosition, state, alertActive]
+    [settings.style, settings.horizontalPosition, settings.offsetX, settings.offsetY, state, alertActive]
   );
 
   // ====== 关键：带平滑动画的 OS 窗口尺寸/位置过渡 ======

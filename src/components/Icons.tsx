@@ -17,6 +17,19 @@ function base(props: IconProps) {
   };
 }
 
+/** 位置（四向移动箭头）——设置侧边栏的「位置」页 */
+export function MoveIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 3v18M3 12h18" />
+      <path d="M12 3l-2.5 2.5M12 3l2.5 2.5" />
+      <path d="M12 21l-2.5-2.5M12 21l2.5-2.5" />
+      <path d="M3 12l2.5-2.5M3 12l2.5 2.5" />
+      <path d="M21 12l-2.5-2.5M21 12l-2.5 2.5" />
+    </svg>
+  );
+}
+
 export function PaletteIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

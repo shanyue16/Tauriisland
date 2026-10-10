@@ -96,6 +96,9 @@ function normalizeSettings(raw: unknown): Settings {
     borderRadius: num(r.borderRadius, d.borderRadius, 0, 30),
     opacity: num(r.opacity, d.opacity, 0, 100),
     horizontalPosition: oneOf(r.horizontalPosition, ["left", "center", "right"] as const, d.horizontalPosition),
+    // 水平可正可负（左右挪）；垂直只允许向下 —— 否则岛会被推到屏幕上方，用户再也点不到
+    offsetX: num(r.offsetX, d.offsetX, -200, 200),
+    offsetY: num(r.offsetY, d.offsetY, 0, 200),
     minimalWidth: num(r.minimalWidth, d.minimalWidth, 100, 240),
     mediumWidth: num(r.mediumWidth, d.mediumWidth, 160, 360),
     // 交互

@@ -1,21 +1,9 @@
 import { useSettings } from "../../stores/settings";
-import type {
-  IslandStyle,
-  HorizontalPosition,
-  ThemeType,
-} from "../../types";
+import type { ThemeType } from "../../types";
 import { THEME_PRESETS } from "../../types";
 
-const STYLES: { key: IslandStyle; label: string }[] = [
-  { key: "floating", label: "悬浮胶囊" },
-  { key: "docked", label: "贴边挂角" },
-];
-
-const POSITIONS: { key: HorizontalPosition; label: string }[] = [
-  { key: "left", label: "靠左" },
-  { key: "center", label: "居中" },
-  { key: "right", label: "靠右" },
-];
+// 说明：岛样式（悬浮胶囊/贴边挂角）与水平位置已挪到「位置」页（PositionSettings），
+// 本页只留与"摆在哪"无关的外观项：主题、圆角、透明度、宽度。
 
 const THEMES: { key: ThemeType; label: string }[] = [
   { key: "dark", label: "暗色" },
@@ -25,7 +13,6 @@ const THEMES: { key: ThemeType; label: string }[] = [
 export default function AppearanceSettings() {
   const { settings, updateSettings } = useSettings();
   const theme = THEME_PRESETS[settings.theme];
-  const isDark = settings.theme === "dark";
 
   return (
     <div className="space-y-5">
@@ -51,31 +38,6 @@ export default function AppearanceSettings() {
               }}
             >
               {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 岛样式 */}
-      <div>
-        <div className="text-[11px] opacity-60 mb-2">岛样式</div>
-        <div className="grid grid-cols-2 gap-2">
-          {STYLES.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => updateSettings({ style: s.key })}
-              className="px-5 py-3.5 rounded-lg text-[13px] font-medium text-center transition-all"
-              style={{
-                background:
-                  settings.style === s.key
-                    ? theme.cardBg
-                    : "transparent",
-                border: `1px solid ${theme.border}`,
-                cursor: "pointer",
-                color: theme.text,
-              }}
-            >
-              {s.label}
             </button>
           ))}
         </div>
@@ -116,31 +78,6 @@ export default function AppearanceSettings() {
         <div className="flex justify-between text-[10px] mt-0.5 opacity-40">
           <span>0% 透明</span>
           <span>100% 不透明</span>
-        </div>
-      </div>
-
-      {/* 水平位置 */}
-      <div>
-        <div className="text-[11px] opacity-60 mb-2">水平位置</div>
-        <div className="flex gap-1">
-          {POSITIONS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => updateSettings({ horizontalPosition: p.key })}
-              className="flex-1 py-1.5 px-3 rounded-md text-[11px] transition-all"
-              style={{
-                background:
-                  settings.horizontalPosition === p.key
-                    ? theme.cardBg
-                    : "transparent",
-                cursor: "pointer",
-                border: `1px solid ${theme.border}`,
-                color: theme.text,
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
         </div>
       </div>
 

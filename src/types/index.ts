@@ -38,6 +38,16 @@ export interface Settings {
   borderRadius: number; // 0-30px
   opacity: number; // 0-100, 0=全透明, 100=完全不透明
   horizontalPosition: HorizontalPosition;
+  /**
+   * 水平微调（px，可负）：在"水平位置"给出的基准之上再左右挪一点。
+   * 两种形态都生效（"贴边"指的是顶边，不限制水平方向）。
+   */
+  offsetX: number;
+  /**
+   * 垂直微调（px，仅向下）：「悬浮胶囊」在默认 8px 顶部间距之上再下移。
+   * **「贴边挂角」形态忽略它** —— 该形态必须贴住屏幕顶边，这是它的定义。
+   */
+  offsetY: number;
   minimalWidth: number; // 100-240
   mediumWidth: number; // 160-360
   // 交互
@@ -96,6 +106,8 @@ export const DEFAULT_SETTINGS: Settings = {
   borderRadius: 24,
   opacity: 100,
   horizontalPosition: "center",
+  offsetX: 0,
+  offsetY: 0,
   minimalWidth: 220,
   // 300：悬浮态音乐页不需要歌词行，回到原始宽度（曾为放歌词临时改成 340）
   mediumWidth: 300,
