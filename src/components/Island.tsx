@@ -610,12 +610,16 @@ export default function Island() {
   const floating = settings.style === "floating";
   const theme = THEME_PRESETS[settings.theme];
 
-  // CSS 变量：让 index.css 里的所有组件（滑块/开关/sidebar-tab）自适应主题
+  // CSS 变量：让 index.css 与各页面自适应主题。
+  // 注意 --island-border 必须在这里注入：:root 里的默认值是深色主题的白色描边，
+  // 浅色主题下如果不覆盖，页面的发丝分隔线（日历英雄块、通知页 header、下拉浮层）
+  // 在近白底上几乎看不见。
   const cssVars: React.CSSProperties = (
     settings.theme === "dark"
       ? {
           "--island-text": "#ffffff",
           "--island-text-muted": "rgba(255,255,255,0.65)",
+          "--island-border": "rgba(255,255,255,0.12)",
           "--sidebar-tab-hover": "rgba(255,255,255,0.08)",
           "--sidebar-tab-active": "rgba(255,255,255,0.14)",
           "--sidebar-tab-active-hover": "rgba(255,255,255,0.2)",
@@ -623,10 +627,22 @@ export default function Island() {
           "--slider-thumb-bg": "#ffffff",
           "--switch-track": "rgba(255,255,255,0.2)",
           "--switch-thumb-bg": "#ffffff",
+          // 浮层（年月下拉 / 悬浮提示）：深色主题用比岛体略亮的深灰
+          "--popover-bg": "rgba(30,32,38,0.98)",
+          "--popover-shadow": "0 10px 26px rgba(0,0,0,0.55)",
+          // 日历语义色（深色底上用亮色）
+          "--cal-holiday": "#ff7a7a",
+          "--cal-festival": "#5aa9ff",
+          "--cal-rest-cell": "rgba(255,122,122,0.10)",
+          "--cal-rest-pill-bg": "rgba(255,122,122,0.16)",
+          "--cal-rest-pill-fg": "#ff9a9a",
+          "--cal-work-pill-bg": "rgba(255,207,107,0.16)",
+          "--cal-work-pill-fg": "#ffcf6b",
         }
       : {
           "--island-text": "#1d1d1f",
           "--island-text-muted": "rgba(29,29,31,0.55)",
+          "--island-border": "rgba(0,0,0,0.12)",
           "--sidebar-tab-hover": "rgba(0,0,0,0.06)",
           "--sidebar-tab-active": "rgba(0,0,0,0.1)",
           "--sidebar-tab-active-hover": "rgba(0,0,0,0.14)",
@@ -634,6 +650,16 @@ export default function Island() {
           "--slider-thumb-bg": "#ffffff",
           "--switch-track": "rgba(0,0,0,0.15)",
           "--switch-thumb-bg": "#ffffff",
+          "--popover-bg": "rgba(252,252,253,0.98)",
+          "--popover-shadow": "0 10px 26px rgba(0,0,0,0.18)",
+          // 日历语义色（浅色底上要用更深的同色系，浅红/浅蓝在近白底上会糊成一片）
+          "--cal-holiday": "#d70015",
+          "--cal-festival": "#0a6cff",
+          "--cal-rest-cell": "rgba(255,59,48,0.12)",
+          "--cal-rest-pill-bg": "rgba(255,59,48,0.12)",
+          "--cal-rest-pill-fg": "#d70015",
+          "--cal-work-pill-bg": "rgba(255,159,10,0.18)",
+          "--cal-work-pill-fg": "#a15c00",
         }
   ) as React.CSSProperties;
 

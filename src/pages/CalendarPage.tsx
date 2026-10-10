@@ -21,18 +21,22 @@ const WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", 
 const MS_PER_DAY = 86400000;
 
 // ===== 配色常量（集中定义便于日后换肤；能走主题变量的都走变量）=====
-/** 主强调色（今天底色 / 选中描边 / 休息日徽标底） */
+/** 主强调色（今天底色 / 选中描边） */
 const ACCENT = "var(--island-accent)";
-/** 月视图正文文字：全部白色 */
-const TEXT_PRIMARY = "#ffffff";
-/** 次级小字（农历）：白色 65%，纯白会让 7.5px 小字发糊 */
-const TEXT_SUB = "rgba(255,255,255,0.65)";
-/** 节气/节日小字：亮蓝（比 accent 更亮，保证深色底上可读） */
-const FESTIVAL_BLUE = "#5aa9ff";
-/** 调休上班角标：红底白「班」（用户要求保留右上角角标，便于一眼扫出调休日） */
+/** 实心 accent 色块上的文字：今天那格底是 accent，深浅主题都必须用白色 */
+const ON_ACCENT = "#ffffff";
+/** 月视图正文文字：随主题（深色=白 / 浅色=近黑）——原来是写死的 #ffffff，浅色主题下白字白底看不见 */
+const TEXT_PRIMARY = "var(--island-text)";
+/** 次级小字（农历）：主题的 muted，纯正文字色会让 8px 小字发糊 */
+const TEXT_SUB = "var(--island-text-muted)";
+/** 节气/节日小字：随主题换深浅（深色=亮蓝 / 浅色=深蓝） */
+const FESTIVAL_BLUE = "var(--cal-festival)";
+/** 调休上班角标：红底白「班」（彩色牌上的白字深浅主题都成立，不随主题走） */
 const BADGE_WORK_BG = "#ff5a5f";
-/** 休息日暖红（日期英雄块的日号 / 月历里休息日的日号与底色） */
-const HOLIDAY_COLOR = "#ff7a7a";
+/** 休息日暖红（日号 / 假日徽标文字）：随主题换深浅 */
+const HOLIDAY_COLOR = "var(--cal-holiday)";
+/** 休息日格的极淡底色：随主题换深浅 */
+const REST_CELL_BG = "var(--cal-rest-cell)";
 /** 年份下拉可跳范围：当前年 ±5 */
 const YEAR_RANGE = 5;
 
@@ -403,7 +407,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
           {pad2(selDayNum)}
         </div>
         {selLunar && (
-          <div className="text-[11px] truncate max-w-full" style={{ marginTop: 7, color: "rgba(255,255,255,0.78)" }}>
+          <div className="text-[11px] truncate max-w-full" style={{ marginTop: 7, color: TEXT_PRIMARY, opacity: 0.8 }}>
             {selLunar}
           </div>
         )}
@@ -419,8 +423,8 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
               marginTop: 8,
               padding: "3px 8px",
               borderRadius: 6,
-              background: selBadge.tone === "rest" ? "rgba(255,122,122,0.16)" : "rgba(255,207,107,0.16)",
-              color: selBadge.tone === "rest" ? "#ff9a9a" : "#ffcf6b",
+              background: selBadge.tone === "rest" ? "var(--cal-rest-pill-bg)" : "var(--cal-work-pill-bg)",
+              color: selBadge.tone === "rest" ? "var(--cal-rest-pill-fg)" : "var(--cal-work-pill-fg)",
             }}
           >
             {selBadge.text}
@@ -480,16 +484,16 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
               data-tip-pos="bottom"
               className="text-[10px] leading-none px-2 py-1 rounded-[6px] cursor-pointer shrink-0 ml-1.5"
               style={{
-                background: "rgba(255,255,255,0.09)",
+                background: "var(--sidebar-tab-hover)",
                 border: "none",
                 color: TEXT_PRIMARY,
                 transition: "background-color 150ms ease",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(255,255,255,0.18)";
+                e.currentTarget.style.background = "var(--sidebar-tab-active-hover)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(255,255,255,0.09)";
+                e.currentTarget.style.background = "var(--sidebar-tab-hover)";
               }}
             >
               今天
@@ -508,7 +512,8 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
               className="text-center"
               style={{
                 fontSize: 9.5,
-                color: i >= 5 ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.5)",
+                color: TEXT_SUB,
+                opacity: i >= 5 ? 0.6 : 0.9,
               }}
             >
               {w}
@@ -548,7 +553,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             const adjust = isAdjustedWorkday(info);
 
             // 今天：蓝底白字；选中：蓝色发丝环（今天同时被选中则蓝底 + 外描边/发光）
-            const restBg = "rgba(255,122,122,0.10)";
+            const restBg = REST_CELL_BG;
             const boxBackground = isToday ? ACCENT : rest ? restBg : "transparent";
             let boxShadow = "none";
             if (isToday && isSelected) {
@@ -577,7 +582,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                     : key
                 }
                 onMouseEnter={(e) => {
-                  if (!isToday) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                  if (!isToday) e.currentTarget.style.background = "var(--sidebar-tab-hover)";
                 }}
                 onMouseLeave={(e) => {
                   if (!isToday) e.currentTarget.style.background = rest ? restBg : "transparent";
@@ -588,8 +593,9 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                   style={{
                     fontSize: 11,
                     fontWeight: isToday || isSelected ? 600 : rest ? 600 : 400,
-                    // 休息日：暖红日号（原来的「休」圆徽标改由颜色承担）
-                    color: isToday ? TEXT_PRIMARY : rest ? HOLIDAY_COLOR : TEXT_PRIMARY,
+                    // 休息日：暖红日号（原来的「休」圆徽标改由颜色承担）；
+                    // 今天那格是 accent 实心底，必须用白字（浅色主题的正文字色是近黑）
+                    color: isToday ? ON_ACCENT : rest ? HOLIDAY_COLOR : TEXT_PRIMARY,
                     opacity: isToday ? 1 : 0.92,
                   }}
                 >
@@ -723,7 +729,7 @@ function DropMenu({
           border: "none",
           borderRadius: 7,
           padding: "3px 7px",
-          background: open ? "rgba(255,255,255,0.12)" : "transparent",
+          background: open ? "var(--sidebar-tab-active)" : "transparent",
           color: TEXT_PRIMARY,
           // 15px 半粗：年/月是这一列最强的文字（原来 11px，读起来像工具条标签）
           fontSize: 15,
@@ -732,7 +738,7 @@ function DropMenu({
           transition: "background-color 150ms ease",
         }}
         onMouseEnter={(e) => {
-          if (!open) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+          if (!open) e.currentTarget.style.background = "var(--sidebar-tab-hover)";
         }}
         onMouseLeave={(e) => {
           if (!open) e.currentTarget.style.background = "transparent";
@@ -743,7 +749,7 @@ function DropMenu({
           style={{
             marginLeft: 5,
             fontSize: 7.5,
-            color: "rgba(255,255,255,0.55)",
+            color: TEXT_SUB,
             transform: open ? "rotate(180deg)" : "none",
             transition: "transform 160ms ease",
           }}
@@ -768,9 +774,11 @@ function DropMenu({
             overscrollBehavior: "contain",
             padding: 6,
             borderRadius: 12,
-            background: "rgba(30,32,38,0.98)",
+            // 浮层用主题的"更高一层表面"：深色主题比岛体略亮、浅色主题接近纯白，
+            // 否则浅色主题下会掉下一块深色面板
+            background: "var(--popover-bg)",
             border: "1px solid var(--island-border)",
-            boxShadow: "0 10px 26px rgba(0,0,0,0.55)",
+            boxShadow: "var(--popover-shadow)",
           }}
         >
           <div
@@ -799,14 +807,14 @@ function DropMenu({
                     border: "none",
                     borderRadius: 7,
                     background: activeOption ? "rgba(10,132,255,0.22)" : "transparent",
-                    color: activeOption ? "#ffffff" : "rgba(255,255,255,0.75)",
+                    color: activeOption ? TEXT_PRIMARY : TEXT_SUB,
                     fontSize: 12,
                     fontWeight: activeOption ? 600 : 400,
                     lineHeight: 1,
                     transition: "background-color 140ms ease",
                   }}
                   onMouseEnter={(e) => {
-                    if (!activeOption) e.currentTarget.style.background = "rgba(255,255,255,0.09)";
+                    if (!activeOption) e.currentTarget.style.background = "var(--sidebar-tab-hover)";
                   }}
                   onMouseLeave={(e) => {
                     if (!activeOption) e.currentTarget.style.background = "transparent";

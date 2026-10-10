@@ -139,10 +139,12 @@ export default function IslandTooltip() {
             maxWidth: 240,
             padding: "4px 9px",
             borderRadius: 8,
-            background: "rgba(24, 26, 31, 0.97)",
+            // 与年月下拉同一套"浮层"材质：深色主题深灰、浅色主题近白（否则浅色主题下
+            // 会掉下一块深色气泡）
+            background: "var(--popover-bg)",
             border: "1px solid var(--island-border)",
-            boxShadow: "0 8px 20px rgba(0, 0, 0, 0.55)",
-            color: "rgba(255, 255, 255, 0.92)",
+            boxShadow: "var(--popover-shadow)",
+            color: "var(--island-text)",
             fontSize: 10.5,
             lineHeight: 1.35,
             letterSpacing: 0.2,

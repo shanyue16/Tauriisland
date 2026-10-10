@@ -16,6 +16,17 @@
   --slider-thumb-bg: #ffffff;
   --switch-track: rgba(255, 255, 255, 0.2);
   --switch-thumb-bg: #ffffff;
+  /* 浮层（年月下拉 / 悬浮提示）——运行时会按主题覆盖 */
+  --popover-bg: rgba(30, 32, 38, 0.98);
+  --popover-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  /* 日历语义色——运行时会按主题覆盖 */
+  --cal-holiday: #ff7a7a;
+  --cal-festival: #5aa9ff;
+  --cal-rest-cell: rgba(255, 122, 122, 0.1);
+  --cal-rest-pill-bg: rgba(255, 122, 122, 0.16);
+  --cal-rest-pill-fg: #ff9a9a;
+  --cal-work-pill-bg: rgba(255, 207, 107, 0.16);
+  --cal-work-pill-fg: #ffcf6b;
 }
 
 * {
