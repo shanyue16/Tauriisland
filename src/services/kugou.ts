@@ -64,7 +64,7 @@ export async function kugouLookup(title: string, artist: string): Promise<KugouT
   const keyword = `${title} ${artist || ""}`.trim();
   try {
     const resp = await fetch(
-      `http://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=${encodeURIComponent(keyword)}&page=1&pagesize=5&showtype=1`,
+      `http://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=${encodeURIComponent(keyword)}&page=1&pagesize=20&showtype=1`,
       { headers: HEADERS }
     );
     if (!resp.ok) return null;
@@ -96,32 +96,49 @@ export async function kugouLookup(title: string, artist: string): Promise<KugouT
   }
 }
 
-/** 取酷狗同步歌词（LRC） */
-export async function kugouLyrics(track: KugouTrack): Promise<LyricLine[]> {
+/**
+ * 取酷狗同步歌词（LRC）。
+ *
+ * @param keyword 可选：调用方原始的「曲名 歌手」。不传则退化为匹配到的 songname/singername —
+ *   后者带「- 电视剧版」这类后缀时，酷狗歌词接口会返回 0 候选（这是「有时拿不到歌词」的一个成因）。
+ *
+ * 对照 eIsland 的 kugou provider 另修两处：
+ * - 时长未知时**不带 duration 参数**（原来恒定传 duration=0，接口会返回空候选）；
+ * - 候选按序尝试最多 3 个：个别候选的 content 为空，换下一个就能拿到。
+ */
+export async function kugouLyrics(track: KugouTrack, keyword?: string): Promise<LyricLine[]> {
   if (!track.hash) return [];
   try {
-    const keyword = encodeURIComponent(`${track.songname} ${track.singername}`.trim());
-    const durMs = Math.round((track.duration || 0) * 1000);
+    const kw = encodeURIComponent((keyword || `${track.songname} ${track.singername}`).trim());
+    const durParam = track.duration > 0 ? `&duration=${Math.round(track.duration * 1000)}` : "";
     const searchResp = await fetch(
-      `https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${keyword}&duration=${durMs}&hash=${track.hash}`,
+      `https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${kw}${durParam}&hash=${track.hash}`,
       { headers: HEADERS }
     );
     if (!searchResp.ok) return [];
     const searchJson = (await searchResp.json()) as {
       candidates?: { id?: string | number; accesskey?: string }[];
     };
-    const cand = searchJson?.candidates?.[0];
-    if (!cand?.id || !cand?.accesskey) return [];
+    const candidates = (searchJson?.candidates ?? []).filter((c) => c?.id && c?.accesskey);
+    if (candidates.length === 0) return [];
 
-    const dlResp = await fetch(
-      `https://lyrics.kugou.com/download?ver=1&client=pc&id=${cand.id}&accesskey=${cand.accesskey}&fmt=lrc&charset=utf8`,
-      { headers: HEADERS }
-    );
-    if (!dlResp.ok) return [];
-    const dlJson = (await dlResp.json()) as { content?: string };
-    if (!dlJson?.content) return [];
+    for (const cand of candidates.slice(0, 3)) {
+      try {
+        const dlResp = await fetch(
+          `https://lyrics.kugou.com/download?ver=1&client=pc&id=${cand.id}&accesskey=${cand.accesskey}&fmt=lrc&charset=utf8`,
+          { headers: HEADERS }
+        );
+        if (!dlResp.ok) continue;
+        const dlJson = (await dlResp.json()) as { content?: string };
+        if (!dlJson?.content) continue;
 
-    return parseSyncedLrc(b64ToUtf8(dlJson.content));
+        const lines = parseSyncedLrc(b64ToUtf8(dlJson.content));
+        if (lines.length > 0) return lines;
+      } catch {
+        /* 换下一个候选 */
+      }
+    }
+    return [];
   } catch {
     return [];
   }

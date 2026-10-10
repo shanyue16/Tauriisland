@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { fetchMusic } from "../services/music";
 import { useSettings } from "../stores/settings";
-import { fetchLyricsFromLrclib, type LyricsResult } from "../services/lyrics";
-import { kugouLookup, kugouLyrics } from "../services/kugou";
+import { fetchLyricsMulti, type LyricsResult } from "../services/lyrics";
+import { kugouLookup, type KugouTrack } from "../services/kugou";
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
 
@@ -207,7 +207,7 @@ export function useMusic() {
         }
 
         // 异步加载曲目元数据（酷狗优先：歌词 + 精确时长 + 封面）
-        void loadTrackMeta(m.title || "", m.artist || "");
+        void loadTrackMeta(m.title || "", m.artist || "", m.app_name ?? null);
       } else if (!hasTrack && prevTrackKeyRef.current) {
         // 播放器退出
         prevTrackKeyRef.current = "";
@@ -332,9 +332,11 @@ export function useMusic() {
 
   /**
    * 异步加载曲目元数据：歌词 + 精确时长 + 封面。
-   * 选源顺序：酷狗（国内可用、就是播放器自己那首，时长/封面/歌词都全）→ LRCLIB 兜底。
+   *
+   * ① 酷狗曲库查询：给精确时长与专辑封面（中文曲库命中率高，且给的是播放器自己那首）；
+   * ② 歌词：eIsland 式多源级联 —— 来源播放器自己的源优先，其余源依次回退，LRCLIB 收尾兜底。
    */
-  async function loadTrackMeta(title: string, artist: string) {
+  async function loadTrackMeta(title: string, artist: string, appName: string | null) {
     const key = makeTrackKey(title, artist);
     const cached = lyricsCache.get(key);
     if (cached) {
@@ -351,33 +353,30 @@ export function useMusic() {
       return;
     }
 
-    // 1) 酷狗：曲库匹配 + 精确时长 + 专辑封面模板
+    // 1) 酷狗曲库：精确时长 + 专辑封面
+    let kugouTrack: KugouTrack | null = null;
     try {
-      const kg = await kugouLookup(title, artist);
-      if (kg) {
-        if (kg.duration > 0) {
-          lrclibDurationRef.current = kg.duration;
-          effectiveDurRef.current = kg.duration;
+      kugouTrack = await kugouLookup(title, artist);
+      if (kugouTrack) {
+        if (kugouTrack.duration > 0) {
+          lrclibDurationRef.current = kugouTrack.duration;
+          effectiveDurRef.current = kugouTrack.duration;
         }
-        if (kg.cover) {
-          kugouCoverRef.current = kg.cover;
-          kugouCoverCache.set(key, kg.cover);
-        }
-
-        const kgLines = await kugouLyrics(kg);
-        if (kgLines.length > 0) {
-          const res: LyricsResult = { lines: kgLines, duration: kg.duration || null };
-          lyricsCache.set(key, res);
-          lyricsRef.current = kgLines;
-          setLyrics(kgLines);
-          return;
+        if (kugouTrack.cover) {
+          kugouCoverRef.current = kugouTrack.cover;
+          kugouCoverCache.set(key, kugouTrack.cover);
         }
       }
-    } catch { /* 落到 LRCLIB */ }
+    } catch { /* 曲库查不到不影响下面的歌词级联 */ }
 
-    // 2) LRCLIB 兜底
+    // 2) 歌词：多源级联（网易云 / QQ / 酷狗 + LRCLIB 兜底）
     try {
-      const result = await fetchLyricsFromLrclib(title, artist);
+      const result: LyricsResult | null = await fetchLyricsMulti({
+        title,
+        artist,
+        appName,
+        kugouTrack,
+      });
       if (result && result.lines.length > 0) {
         lyricsCache.set(key, result);
         lyricsRef.current = result.lines;

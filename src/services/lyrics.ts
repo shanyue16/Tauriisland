@@ -1,120 +1,143 @@
 /**
- * 歌词获取 — 前端直连 LRCLIB（Tauri HTTP 白名单已放行 lrclib.net）。
- * 四策略搜索（精确 → 清洗后 → 模糊 → get），同时返回 LRCLIB duration（秒）。
- * LRCLIB 的 duration 是官方精确值，比 SMTC 上报可靠得多。
+ * 歌词获取 —— 多源级联，方式与 eIsland（src/renderer/api/lyrics/lrcs）一致：
+ *
+ *   ① 按 SMTC 来源进程选「主源」（detectProviderFromApp，对应 eIsland 的 PROCESS_TO_PROVIDER）
+ *   ② 主源 → 其余源依次回退（ALL_PROVIDERS 顺序同 eIsland：netease → qqmusic → kugou）
+ *   ③ 全部失败才落到 LRCLIB 兜底
+ *
+ * 为什么换掉「酷狗 + LRCLIB」两源：中文歌在 LRCLIB 命中率低，一旦播放器自带的源（网易云/QQ）
+ * 或酷狗那边关键字不匹配，就直接空手而归 —— 这是「有时获取不到歌词」的主因。
+ *
+ * 另外每个源都有 cleanTitle/cleanArtist 二次重试（eIsland 同款），并且单请求 6s 超时，
+ * 避免某个源卡住把整条级联拖死。
  */
 
-import { fetch } from "@tauri-apps/plugin-http";
 import type { LyricLine } from "../types/lyrics";
-import { parseSyncedLrc } from "../utils/lrcParser";
+import type { KugouTrack } from "./kugou";
+import { fetchLyricsFromKugou } from "./lyricsProviders/kugou";
+import { fetchLyricsFromLrclib as lrclibProvider } from "./lyricsProviders/lrclib";
+import { fetchLyricsFromNetease } from "./lyricsProviders/netease";
+import { fetchLyricsFromQQMusic } from "./lyricsProviders/qqmusic";
+import type { ProviderLyrics } from "./lyricsProviders/types";
 
-const LRCLIB_HEADERS = {
-  "User-Agent": "Tauriisland/2.0",
-  Accept: "application/json",
-};
-
-interface LrcLibItem {
-  trackName?: string;
-  artistName?: string;
-  duration?: number | null;
-  syncedLyrics?: string | null;
-}
+export type LyricsProvider = "netease" | "qqmusic" | "kugou" | "lrclib";
 
 export interface LyricsResult {
   lines: LyricLine[];
-  /** LRCLIB 官方 duration（秒，精确），可能 null */
+  /** 该源给出的精确时长（秒）；无则 null */
   duration: number | null;
+  /** 命中来源（诊断用） */
+  provider?: LyricsProvider;
 }
 
-function cleanTitle(t: string): string {
-  return t
-    .replace(/\s*\([^)]*\)\s*/g, " ")
-    .replace(/\s*\[[^\]]*\]\s*/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+export interface LyricsQuery {
+  title: string;
+  artist: string;
+  /** SMTC 来源应用（AUMID 或显示名），用于选主源 */
+  appName?: string | null;
+  /** 已经查到过的酷狗曲目：复用 hash/时长，省一次搜索 */
+  kugouTrack?: KugouTrack | null;
 }
 
-/** 四策略 LRCLIB 搜索 */
-async function lrclib_search(title: string, artist: string): Promise<LyricsResult | null> {
-  // 策略 1 & 2: /api/search 精确
-  for (const [t, a] of [
-    [title, artist],
-    [cleanTitle(title), artist],
-  ]) {
-    if (!t) continue;
-    const url = `https://lrclib.net/api/search?track_name=${encodeURIComponent(t)}&artist_name=${encodeURIComponent(a)}`;
-    try {
-      const resp = await fetch(url, { headers: LRCLIB_HEADERS });
-      if (!resp.ok) continue;
-      const items = (await resp.json()) as LrcLibItem[];
-      if (items?.length) {
-        for (const item of items) {
-          if (item.syncedLyrics) {
-            const lines = parseSyncedLrc(item.syncedLyrics);
-            if (lines.length) {
-              return { lines, duration: item.duration ?? null };
-            }
-          }
-        }
-      }
-    } catch { /* 继续下一策略 */ }
+const LOG = "[Lyrics]";
+
+/**
+ * 与 eIsland 的 PROCESS_TO_PROVIDER 对齐（只保留本项目实现的源）。
+ * app_name 来自 SMTC 的 SourceAppUserModelId，正常是 "CloudMusic.exe" / "QQMusic.exe" /
+ * "KuGou.exe" 这类 AUMID；后面那几个中文/别名分支是兜底（个别播放器会报显示名）。
+ */
+const PROCESS_TO_PROVIDER: Array<{ pattern: RegExp; provider: LyricsProvider }> = [
+  { pattern: /cloudmusic|netease|网易云/i, provider: "netease" },
+  { pattern: /qqmusic|qq音乐/i, provider: "qqmusic" },
+  { pattern: /kugou|酷狗/i, provider: "kugou" },
+];
+
+/** eIsland 的 ALL_PROVIDERS 顺序（去掉本项目未实现的汽水/Apple/Spotify/MoeKoe） */
+const ALL_PROVIDERS: LyricsProvider[] = ["netease", "qqmusic", "kugou"];
+
+/** 单请求超时：卡住的源不能拖住整条级联 */
+const PER_REQUEST_TIMEOUT = 6000;
+
+function withTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), PER_REQUEST_TIMEOUT)),
+  ]);
+}
+
+/** 时长合理性闸门：5s~3600s 之外的一律判无效（防某个源单位不对把进度条搞坏） */
+function saneDuration(seconds: number | null | undefined): number | null {
+  if (!seconds || !isFinite(seconds)) return null;
+  return seconds >= 5 && seconds <= 3600 ? seconds : null;
+}
+
+export function detectProviderFromApp(appName: string | null | undefined): LyricsProvider | null {
+  if (!appName) return null;
+  const matched = PROCESS_TO_PROVIDER.find(({ pattern }) => pattern.test(appName));
+  return matched?.provider ?? null;
+}
+
+function runProvider(
+  provider: LyricsProvider,
+  title: string,
+  artist: string,
+  kugouTrack?: KugouTrack | null
+): Promise<ProviderLyrics | null> {
+  switch (provider) {
+    case "netease":
+      return fetchLyricsFromNetease(title, artist);
+    case "qqmusic":
+      return fetchLyricsFromQQMusic(title, artist);
+    case "kugou":
+      return fetchLyricsFromKugou(title, artist, kugouTrack);
+    default:
+      return Promise.resolve(null);
+  }
+}
+
+/**
+ * 多源级联取歌词。命中即返回；全部失败返回 null（调用方自行决定空态）。
+ */
+export async function fetchLyricsMulti(query: LyricsQuery): Promise<LyricsResult | null> {
+  const { title, artist, appName, kugouTrack } = query;
+  if (!title && !artist) return null;
+
+  const primary = detectProviderFromApp(appName);
+  const order = primary ? [primary, ...ALL_PROVIDERS.filter((p) => p !== primary)] : ALL_PROVIDERS;
+
+  for (const provider of order) {
+    const hit = await withTimeout(runProvider(provider, title, artist, kugouTrack), null);
+    if (hit && hit.lines.length > 0) {
+      console.info(`${LOG} 命中 ${provider}: "${title} / ${artist}"（${hit.lines.length} 行）`);
+      return { lines: hit.lines, duration: saneDuration(hit.duration), provider };
+    }
+    console.warn(`${LOG} ${provider} 未命中: "${title} / ${artist}"`);
   }
 
-  // 策略 3: 模糊关键词
-  const query = `${cleanTitle(title)} ${artist}`.trim();
-  if (query) {
-    try {
-      const resp = await fetch(
-        `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`,
-        { headers: LRCLIB_HEADERS }
-      );
-      if (resp.ok) {
-        const items = (await resp.json()) as LrcLibItem[];
-        if (items?.length) {
-          for (const item of items) {
-            if (item.syncedLyrics) {
-              const lines = parseSyncedLrc(item.syncedLyrics);
-              if (lines.length) {
-                return { lines, duration: item.duration ?? null };
-              }
-            }
-          }
-        }
-      }
-    } catch { /* 忽略 */ }
+  // 最后一档：LRCLIB（eIsland 同样放在所有源之后）
+  const lr = await withTimeout(lrclibProvider(title, artist), null);
+  if (lr && lr.lines.length > 0) {
+    console.info(`${LOG} 命中 lrclib（兜底）: "${title} / ${artist}"（${lr.lines.length} 行）`);
+    return { lines: lr.lines, duration: saneDuration(lr.duration), provider: "lrclib" };
   }
 
-  // 策略 4: /api/get 精确获取
-  if (title) {
-    try {
-      const resp = await fetch(
-        `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`,
-        { headers: LRCLIB_HEADERS }
-      );
-      if (resp.ok) {
-        const item = (await resp.json()) as LrcLibItem;
-        if (item?.syncedLyrics) {
-          const lines = parseSyncedLrc(item.syncedLyrics);
-          if (lines.length) {
-            return { lines, duration: item.duration ?? null };
-          }
-        }
-      }
-    } catch { /* 忽略 */ }
-  }
-
+  console.warn(`${LOG} 全部源都未命中: "${title} / ${artist}"`);
   return null;
 }
 
+/** 兼容旧调用：只走 LRCLIB */
 export async function fetchLyricsFromLrclib(
   title: string,
   artist: string
 ): Promise<LyricsResult | null> {
   if (!title) return null;
   try {
-    return await lrclib_search(title, artist);
+    const r = await lrclibProvider(title, artist);
+    return r && r.lines.length > 0
+      ? { lines: r.lines, duration: saneDuration(r.duration), provider: "lrclib" }
+      : null;
   } catch (e) {
-    console.warn("[Lyrics] fetch error:", e);
+    console.warn("[Lyrics] LRCLIB error:", e);
     return null;
   }
 }
