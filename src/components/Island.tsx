@@ -15,7 +15,7 @@ import { fetchNotifications } from "../services/notifications";
 import { isBlacklisted, type NotificationItem } from "../types/notification";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
-import { extractCoverColor, lighten } from "../utils/coverColor";
+import { useCoverAccent } from "../hooks/useCoverAccent";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { controlMusic } from "../services/music";
@@ -948,6 +948,9 @@ function MinimalContent({
   const muted = "var(--island-text-muted)";
 
   const hasActiveMusic = musicData?.active && musicData.title;
+  // 封面光晕色：与展开态/悬浮态同一来源（= 进度条/丝线用的那份封面主色）。
+  // hook 必须放在下面的条件 return 之前（Hooks 规则）。
+  const { accent } = useCoverAccent(musicData?.cover_url ?? null);
 
   // —— 有音乐时：封面 + 右侧两行（[歌名][歌手] / 当前歌词）+ 时间 ——
   if (hasActiveMusic) {
@@ -960,7 +963,8 @@ function MinimalContent({
           style={{
             width: 28, height: 28,
             background: musicData.cover_url ? "transparent" : "linear-gradient(135deg, #f472b6, #60a5fa)",
-            boxShadow: musicData.cover_url ? "0 2px 6px rgba(0,0,0,0.3)" : "0 2px 8px rgba(244,114,182,0.3)",
+            // 封面光晕（用户要求三态都加）：颜色 = 封面主色 = 悬浮/展开态进度条同源
+            boxShadow: `0 0 0 1px ${accent}40, 0 0 12px 3px ${accent}59, 0 2px 6px rgba(0,0,0,0.3)`,
           }}
         >
           {musicData.cover_url ? (
@@ -1172,27 +1176,9 @@ function MusicDetailView({
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
-  // 封面主色：从封面图提取（被 CORS 拒绝或没有封面时回退默认粉/蓝）。
-  // 光晕与折线共用这一个来源 → 保证"折线颜色 = 封面周围光晕颜色"。
-  const [coverColor, setCoverColor] = useState<string | null>(null);
-  const coverUrl = data?.cover_url ?? null;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!coverUrl) {
-      setCoverColor(null);
-      return;
-    }
-    void extractCoverColor(coverUrl).then((c) => {
-      if (!cancelled) setCoverColor(c);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [coverUrl]);
-
-  const accentColor = coverColor ?? "#f472b6";
-  const accentColor2 = coverColor ? lighten(coverColor) : "#60a5fa";
+  // 封面主色：三态共用同一个来源（hook）—— 光晕、丝线、播放键、进度条都是它，
+  // 因此"封面周围的光晕颜色 = 进度条颜色"必定一致。
+  const { accent: accentColor, accent2: accentColor2 } = useCoverAccent(data?.cover_url ?? null);
 
   if (!data?.active) {
     return (

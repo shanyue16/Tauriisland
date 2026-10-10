@@ -174,7 +174,10 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .m-sub{font-size:10px;color:var(--theme-muted);margin-top:3px}
 /* 悬浮态·音乐页 */
 .mm-cover{width:28px;height:28px;border-radius:6px;flex:0 0 auto;
-  background:linear-gradient(135deg,#f472b6,#60a5fa)}
+  background:linear-gradient(135deg,#f472b6,#60a5fa);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent),
+             0 0 10px 2px color-mix(in srgb,var(--accent) 35%,transparent),
+             0 1px 3px rgba(0,0,0,.2)}
 .mm-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .mm-row1{display:flex;align-items:baseline;gap:8px;min-width:0}
 .mm-title{flex:1;min-width:0;font-size:12px;font-weight:500;line-height:1.25;
@@ -182,8 +185,11 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .mm-time{flex:0 0 auto;font-size:9px;color:var(--theme-muted);opacity:.5}
 .mm-artist{font-size:9.5px;color:var(--theme-muted);opacity:.9;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mm-track{width:100%;height:3px;border-radius:99px;background:var(--track);overflow:hidden;flex:0 0 auto}
-.mm-fill{height:100%;width:38%;border-radius:99px;background:var(--accent)}
+.mm-track{width:100%;height:3px;border-radius:99px;background:var(--track);overflow:hidden;flex:0 0 auto;
+  /* 进度条光晕（用户要求）：轨道自身 boxShadow 不受自己 overflow 影响，看得见 */
+  box-shadow:0 0 6px 1px color-mix(in srgb,var(--accent) 25%,transparent)}
+.mm-fill{height:100%;width:38%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2))}
 /* 竖排页码指示器：right:8，垂直居中 */
 .dots-v{position:absolute;right:8px;top:0;bottom:0;display:flex;flex-direction:column;
   justify-content:center;align-items:center;gap:4px}
@@ -197,7 +203,11 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .minimal .glass{inset:2px;border-radius:28px}
 .minimal .page{position:absolute;inset:0;padding:0 var(--pad-mini);display:flex;align-items:center;gap:10px}
 .mi-cover{width:var(--mini-cover);height:var(--mini-cover);border-radius:7px;flex:0 0 auto;
-  background:linear-gradient(135deg,#f472b6,#60a5fa)}
+  background:linear-gradient(135deg,#f472b6,#60a5fa);
+  /* 封面光晕（三态都有）：颜色与悬浮/展开态进度条同源 */
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent),
+             0 0 12px 3px color-mix(in srgb,var(--accent) 35%,transparent),
+             0 2px 6px rgba(0,0,0,.3)}
 .mi-tt{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mi-ar{flex:0 0 auto;max-width:45%;font-size:10px;color:var(--theme-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mi-tm{font-size:10px;color:var(--theme-muted);margin-left:auto;flex:0 0 auto}

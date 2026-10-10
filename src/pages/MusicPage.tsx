@@ -1,5 +1,6 @@
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
+import { useCoverAccent } from "../hooks/useCoverAccent";
 
 interface MusicPageProps {
   data: MusicData | null;
@@ -10,6 +11,11 @@ interface MusicPageProps {
 export default function MusicPage({ data }: MusicPageProps) {
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
+
+  // 封面主色：与失焦态/展开态同一来源 —— 悬浮态的封面光晕与进度条都用它（同源）。
+  // hook 必须放在下面的条件 return 之前（Hooks 规则）。
+  const { accent, accent2 } = useCoverAccent(data?.cover_url ?? null);
+  const coverGlow = `0 0 0 1px ${accent}40, 0 0 10px 2px ${accent}59, 0 1px 3px rgba(0,0,0,0.2)`;
 
   // 加载态 / 空态 / 正常态的内边距口径必须一致（垂直 py-1 = 线框稿 mini 规格 4px）：
   // 原来这两种非正常态只有 pt-1（上 4px、下 0），内容被推低 2px，从"加载中"切到
@@ -60,14 +66,14 @@ export default function MusicPage({ data }: MusicPageProps) {
           alt=""
           className="w-7 h-7 rounded-md object-cover flex-shrink-0"
           draggable={false}
-          style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }}
+          style={{ boxShadow: coverGlow }}
         />
       ) : (
         <div
           className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-          style={{ background: "var(--surface-1)", opacity: 0.5 }}
+          style={{ background: "var(--surface-1)", boxShadow: coverGlow }}
         >
-          <MusicIcon size={14} style={{ color }} />
+          <MusicIcon size={14} style={{ color, opacity: 0.5 }} />
         </div>
       )}
 
@@ -95,16 +101,21 @@ export default function MusicPage({ data }: MusicPageProps) {
           {data.artist || "未知艺术家"}
         </div>
 
-        {/* 第三行: 进度条 */}
+        {/* 第三行: 进度条（用户要求加光晕）。轨道带一圈封面主色光晕（track 自身
+            的 boxShadow 不受自己 overflow:hidden 影响，看得见）；已播段用同色渐变，
+            这样"封面光晕 = 进度条颜色"是同源。 */}
         <div
           className="w-full h-[3px] rounded-full overflow-hidden flex-shrink-0"
-          style={{ backgroundColor: "var(--slider-track)" }}
+          style={{
+            backgroundColor: "var(--slider-track)",
+            boxShadow: `0 0 6px 1px ${accent}40`,
+          }}
         >
           <div
             className="h-full rounded-full transition-all"
             style={{
               width: `${progress}%`,
-              backgroundColor: color,
+              background: `linear-gradient(90deg, ${accent}, ${accent2})`,
             }}
           />
         </div>
