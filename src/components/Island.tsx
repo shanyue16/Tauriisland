@@ -16,6 +16,7 @@ import { isBlacklisted, type NotificationItem } from "../types/notification";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
 import { useCoverAccent } from "../hooks/useCoverAccent";
+import { MOTION, easeOut, prefersReducedMotion, speedFactor } from "../utils/motion";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { controlMusic } from "../services/music";
@@ -83,14 +84,6 @@ const MAXIMAL_H = EXPANDED_H + SHADOW_PAD * 2;
 
 const appWindow = getCurrentWindow();
 
-// easeOutCubic: 先快后慢，最自然的过渡感
-function easeOutCubic(t: number) {
-  return 1 - Math.pow(1 - t, 3);
-}
-
-// 动画时长 ms — 和 CSS transition 统一
-const ANIM_DURATION = 280;
-
 export default function Island() {
   const { settings, state, setState, currentPage, setCurrentPage } =
     useSettings();
@@ -121,7 +114,18 @@ export default function Island() {
    * 尺寸由 getSize() 里的 `alert ? 展开尺寸 : 正常尺寸` 决定，所以窗口会跟着变大再缩回。
    */
   const [alertItem, setAlertItem] = useState<NotificationItem | null>(null);
+  /**
+   * 提醒是否正在"退场"。
+   *
+   * 出场必须与入场对称（淡出 + 轻微上移），所以收起时先标记 leaving 让它淡出
+   * MOTION.alertOut 毫秒，再真正卸载。leaving 期间 `alertActive` 已为 false，
+   * 于是窗口开始收缩、底层内容同时淡回来 —— 三个动作叠成一次"收起"。
+   */
+  const [alertLeaving, setAlertLeaving] = useState(false);
   const alertTimerRef = useRef<number | null>(null);
+  const alertLeaveTimerRef = useRef<number | null>(null);
+  /** 提醒是否正在"占用"岛（退场中不算：那段时间窗口该收缩、底层内容该淡回来） */
+  const alertActive = alertItem !== null && !alertLeaving;
   /** 指针是否停在提醒上（停住时不自动收起，等移开再重新计时） */
   const alertHoverRef = useRef(false);
 
@@ -183,6 +187,13 @@ export default function Island() {
             ? { w: settings.mediumWidth, h: MEDIUM_H }
             : { w: MAXIMAL_W, h: MAXIMAL_H };
       currentSizeRef.current = base;
+      // 上一条提醒若还在退场（140ms 窗口内又来了一条），立刻取消退场并复用该层，
+      // 否则新提醒刚显示就会被上一次的退场定时器卸载掉。
+      if (alertLeaveTimerRef.current !== null) {
+        window.clearTimeout(alertLeaveTimerRef.current);
+        alertLeaveTimerRef.current = null;
+      }
+      setAlertLeaving(false);
       // 新提醒一律从"指针不在提醒上"开始：否则上一条提醒留下的悬停标记会让
       // 新提醒的计时器一启动就自我顺延，永远不收起。
       alertHoverRef.current = false;
@@ -198,6 +209,11 @@ export default function Island() {
   const currentPosRef = useRef({ x: 0, y: 8 });
   // 正在运行的动画帧 ID，用于取消前一次动画
   const animFrameRef = useRef<number | null>(null);
+  // 上一次**真正下发**给 OS 的尺寸/位置 —— 用来去重：尺寸没变的转场（如展开↔设置）
+  // 不再每帧重复调 setSize/setPosition，省掉一半以上的 IPC。
+  const appliedRef = useRef<{ w: number; h: number; x: number; y: number } | null>(null);
+  // 上一个状态 —— 用来判断这次转场是"悬浮级"（天天发生，要快）还是"展开级"（偶发，可从容）
+  const prevStateRef = useRef<IslandState>(state);
 
 
   // 计算尺寸
@@ -205,7 +221,7 @@ export default function Island() {
   const getSize = () => {
     // 提醒借用展开态宽度，高度按实测内容钳制（内容长→高，内容短→矮）。
     // 测量未完成时先用 ALERT_MIN_H 兜底，测完立刻换真实值。
-    if (alertItem) {
+    if (alertActive) {
       const measured = alertHeight ?? ALERT_MIN_H;
       const h = Math.min(Math.max(measured, ALERT_MIN_H), ALERT_MAX_H);
       return { w: EXPANDED_W + SHADOW_PAD * 2, h: h + SHADOW_PAD * 2 };
@@ -229,7 +245,7 @@ export default function Island() {
       // 贴边挂角：**岛体**顶边必须与屏幕顶边齐平（用户反馈"最上的边与桌面有一定距离"）。
       //   注意展开态/最大态/通知提醒的窗口四周带 SHADOW_PAD 留白，此时窗口要整体上移
       //   -SHADOW_PAD，岛体顶边才会落在 y=0；配合 innerStyle 的上边零内缩才真正贴边。
-      const expandedGeometry = state === "expanded" || state === "maximal" || alertItem !== null;
+      const expandedGeometry = state === "expanded" || state === "maximal" || alertActive;
       const y = settings.style === "docked" ? (expandedGeometry ? -SHADOW_PAD : 0) : 8;
       let x: number;
       switch (settings.horizontalPosition as HorizontalPosition) {
@@ -245,31 +261,90 @@ export default function Island() {
       }
       return { x, y };
     },
-    [settings.style, settings.horizontalPosition, state, alertItem]
+    [settings.style, settings.horizontalPosition, state, alertActive]
   );
 
   // ====== 关键：带平滑动画的 OS 窗口尺寸/位置过渡 ======
   // Windows 上 Tauri setSize / setPosition 不支持原生动画
   // 用 requestAnimationFrame 手动插值，每帧调用一次，约 60fps
+  /**
+   * 带缓动的 OS 窗口形变。
+   *
+   * 为什么必须是 JS：Windows 上 setSize/setPosition 没有原生动画，CSS 也管不到窗口本身。
+   * 插值是"重定向式"的（每帧从 currentSize/currentPos 继续），所以中途改向不会跳回起点
+   * —— 等价于 CSS transition 的 retarget 语义，而不是 keyframes 的"从头重放"。
+   *
+   * 三处降成本：
+   *  ① 已经在目标上 → 直接返回（历史：展开↔设置尺寸相同，也会空转 280ms×17 帧）；
+   *  ② 逐轴去重 → 尺寸没变不调 setSize、位置没变不调 setPosition，且两个调用并行下发；
+   *  ③ prefers-reduced-motion → 不插值，一步落位（内容层仍有透明度过渡）。
+   */
   const animateWindow = useCallback(
-    async (targetW: number, targetH: number) => {
+    async (targetW: number, targetH: number, kind: "hover" | "expand") => {
       // 取消前一次还在跑的动画（快速切换状态时避免互相干扰）
       if (animFrameRef.current !== null) {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
       }
 
+      const targetPos = getTargetPos(targetW);
       const startW = currentSizeRef.current.w;
       const startH = currentSizeRef.current.h;
-      const targetPos = getTargetPos(targetW);
       const startPos = currentPosRef.current;
+
+      // 只把真正变化的那一轴下发给 OS（0.5px 以内视为没变）
+      const apply = async (w: number, h: number, x: number, y: number, force = false) => {
+        const last = appliedRef.current;
+        const sizeChanged =
+          force || !last || Math.abs(last.w - w) >= 0.5 || Math.abs(last.h - h) >= 0.5;
+        const posChanged =
+          force || !last || Math.abs(last.x - x) >= 0.5 || Math.abs(last.y - y) >= 0.5;
+        if (!sizeChanged && !posChanged) return;
+        try {
+          // 并行下发：一次往返而不是两次，每帧省下约一半延迟
+          await Promise.all([
+            sizeChanged ? appWindow.setSize(new LogicalSize(w, h)) : Promise.resolve(),
+            posChanged ? appWindow.setPosition(new LogicalPosition(x, y)) : Promise.resolve(),
+          ]);
+          appliedRef.current = { w, h, x, y };
+        } catch {
+          // ignore — 窗口可能在动画过程中被关闭
+        }
+      };
+
+      // ① 已在目标上：不跑动画，但仍强制落位一次。
+      //    只依赖我们自己维护的位置模型是有风险的（窗口可能被外部移动过，比如分辨率变化），
+      //    一次强制下发既自愈这种情况，又省掉了历史上那次 17 帧的空转。
+      const settled =
+        Math.abs(startW - targetW) < 0.5 &&
+        Math.abs(startH - targetH) < 0.5 &&
+        Math.abs(startPos.x - targetPos.x) < 0.5 &&
+        Math.abs(startPos.y - targetPos.y) < 0.5;
+      if (settled) {
+        currentSizeRef.current = { w: targetW, h: targetH };
+        currentPosRef.current = targetPos;
+        await apply(targetW, targetH, targetPos.x, targetPos.y, true);
+        return;
+      }
+
+      // 时长 = 转场基准（悬浮级 180 / 展开级 280）× 用户"动画速度"倍率；
+      // ③ 减少动态效果时直接落位。
+      const duration = prefersReducedMotion()
+        ? 0
+        : MOTION[kind] * speedFactor(settings.animationSpeed);
+
+      if (duration <= 0) {
+        currentSizeRef.current = { w: targetW, h: targetH };
+        currentPosRef.current = targetPos;
+        await apply(targetW, targetH, targetPos.x, targetPos.y, true);
+        return;
+      }
 
       const startTime = performance.now();
 
       const tick = async () => {
-        const now = performance.now();
-        const t = Math.min((now - startTime) / ANIM_DURATION, 1);
-        const eased = easeOutCubic(t);
+        const t = Math.min((performance.now() - startTime) / duration, 1);
+        const eased = easeOut(t);
 
         const w = startW + (targetW - startW) * eased;
         const h = startH + (targetH - startH) * eased;
@@ -281,38 +356,41 @@ export default function Island() {
         currentSizeRef.current = { w, h };
         currentPosRef.current = { x, y };
 
-        try {
-          await appWindow.setSize(new LogicalSize(w, h));
-          await appWindow.setPosition(new LogicalPosition(x, y));
-        } catch {
-          // ignore — 窗口可能在动画过程中被关闭
-        }
-
         if (t < 1) {
+          await apply(w, h, x, y);
           animFrameRef.current = requestAnimationFrame(tick);
         } else {
-          // 动画结束，精确对齐目标值（避免浮点误差累积）
+          // 收尾：精确对齐目标值（避免浮点误差累积），并强制下发一次
           currentSizeRef.current = { w: targetW, h: targetH };
           currentPosRef.current = targetPos;
+          await apply(targetW, targetH, targetPos.x, targetPos.y, true);
           animFrameRef.current = null;
         }
       };
 
       animFrameRef.current = requestAnimationFrame(tick);
     },
-    [getTargetPos]
+    [getTargetPos, settings.animationSpeed]
   );
 
-  // 每次 state / size 变化，触发带动画的 OS 窗口过渡
+  // 每次 state / size 变化，触发带缓动的 OS 窗口过渡
   useEffect(() => {
-    animateWindow(size.w, size.h);
-  }, [size.w, size.h, animateWindow]);
+    // 转场分级：失焦↔悬浮每天都发生很多次 → 走快档；其余（展开/设置/提醒）是偶发动作。
+    const from = prevStateRef.current;
+    const hoverTier =
+      (from === "minimal" && state === "medium") || (from === "medium" && state === "minimal");
+    prevStateRef.current = state;
+    animateWindow(size.w, size.h, hoverTier ? "hover" : "expand");
+  }, [size.w, size.h, state, animateWindow]);
 
   // 组件卸载时清理动画
   useEffect(() => {
     return () => {
       if (animFrameRef.current !== null) {
         cancelAnimationFrame(animFrameRef.current);
+      }
+      if (alertLeaveTimerRef.current !== null) {
+        window.clearTimeout(alertLeaveTimerRef.current);
       }
     };
   }, []);
@@ -349,18 +427,18 @@ export default function Island() {
     clearTimers();
     // 提醒显示期间锁住状态：否则悬停会把 minimal 顶成 medium，提醒收起后
     // 用户会莫名其妙停在悬浮态（并且底下那层已经在动）
-    if (alertItem) return;
+    if (alertActive) return;
     if (state === "minimal") {
       hoverTimerRef.current = window.setTimeout(() => {
         setState("medium");
       }, settings.hoverDelay);
     }
-  }, [state, settings.hoverDelay, clearTimers, setState, alertItem]);
+  }, [state, settings.hoverDelay, clearTimers, setState, alertActive]);
 
   // 鼠标离开
   const handleMouseLeave = useCallback(() => {
     clearTimers();
-    if (alertItem) return; // 提醒显示期间不自动收起
+    if (alertActive) return; // 提醒显示期间不自动收起
     if (state === "maximal") {
       collapseTimerRef.current = window.setTimeout(() => {
         setState("medium");
@@ -371,7 +449,7 @@ export default function Island() {
         setState("minimal");
       }, settings.collapseDelay);
     }
-  }, [state, settings.collapseDelay, clearTimers, setState, setCurrentPage, alertItem]);
+  }, [state, settings.collapseDelay, clearTimers, setState, setCurrentPage, alertActive]);
 
   // 滚轮翻页 / 状态切换
   /**
@@ -397,7 +475,7 @@ export default function Island() {
     (e: React.WheelEvent) => {
       if (!settings.wheelEnabled) return;
       // 提醒显示期间不接受翻页/转场（用户反馈"弹出消息时可以在各种状态之间切换"）
-      if (alertItem) return;
+      if (alertActive) return;
 
       const root = e.currentTarget as HTMLElement;
       const target = e.target as Element | null;
@@ -466,7 +544,7 @@ export default function Island() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       // 设置面板要能正常输入/回车；提醒期间不接受方向键翻页
-      if (alertItem) return;
+      if (alertActive) return;
       if (e.key === "Escape") {
         if (state === "maximal") {
           returnFromMaximal();
@@ -498,7 +576,7 @@ export default function Island() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [state, currentPage, expandedPage, setState, setCurrentPage, returnFromMaximal, alertItem]);
+  }, [state, currentPage, expandedPage, setState, setCurrentPage, returnFromMaximal, alertActive]);
 
   useEffect(() => {
     return () => clearTimers();
@@ -572,9 +650,18 @@ export default function Island() {
   const dismissAlert = useCallback(() => {
     const stillHovering = alertHoverRef.current;
     alertHoverRef.current = false;
-    setAlertItem(null);
-    // 清掉上一条的实测高度：否则下一条提醒会先按旧高度弹、再跳一下
     setAlertHeight(null);
+    // 出场与入场对称：先标记退场让提醒层淡出（140ms），再真正卸载。
+    // 期间 alertActive 已经为 false → 窗口开始收缩、底层内容同时淡入，
+    // 三个动作叠成一次"收起"，而不是"内容瞬间消失 + 窗口缩一下"。
+    setAlertLeaving(true);
+    if (alertLeaveTimerRef.current !== null) window.clearTimeout(alertLeaveTimerRef.current);
+    alertLeaveTimerRef.current = window.setTimeout(() => {
+      alertLeaveTimerRef.current = null;
+      setAlertLeaving(false);
+      // 清掉上一条的实测高度：否则下一条提醒会先按旧高度弹、再跳一下
+      setAlertItem(null);
+    }, MOTION.alertOut);
     if (stillHovering) {
       clearTimers();
       if (state === "minimal") {
@@ -592,7 +679,7 @@ export default function Island() {
    * 用 `alertHoverRef` 而不是 state，避免每次鼠标移动都重渲染。
    */
   useEffect(() => {
-    if (!alertItem) return;
+    if (!alertActive) return;
     const delay = Math.max(2000, settings.notificationAlertMs);
     const schedule = () => {
       if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
@@ -613,19 +700,19 @@ export default function Island() {
         alertTimerRef.current = null;
       }
     };
-  }, [alertItem, settings.notificationAlertMs, dismissAlert]);
+  }, [alertActive, settings.notificationAlertMs, dismissAlert]);
 
   /** 鼠标离开提醒层：若正在顺延中，重新计时 */
   const handleAlertMouseLeave = useCallback(() => {
     alertHoverRef.current = false;
-    if (!alertItem) return;
+    if (!alertActive) return;
     if (alertTimerRef.current !== null) window.clearTimeout(alertTimerRef.current);
     const delay = Math.max(2000, settings.notificationAlertMs);
     alertTimerRef.current = window.setTimeout(() => {
       alertTimerRef.current = null;
       dismissAlert();
     }, delay);
-  }, [alertItem, settings.notificationAlertMs, dismissAlert]);
+  }, [alertActive, settings.notificationAlertMs, dismissAlert]);
 
   const floating = settings.style === "floating";
   const theme = THEME_PRESETS[settings.theme];
@@ -728,7 +815,7 @@ export default function Island() {
    * 提醒借用展开态的留白/阴影/圆角（SHADOW_PAD 那套规则必须一起用，否则阴影会被
    * 窗口边界裁成硬边，就是之前那个"长方形黑边"），但 `state` 与用户页签都不变。
    */
-  const isExpandedLayout = isExpanded || state === "maximal" || alertItem !== null;
+  const isExpandedLayout = isExpanded || state === "maximal" || alertActive;
 
   /**
    * 某个内容层当前是否应该可见。
@@ -737,7 +824,24 @@ export default function Island() {
    * 半透明玻璃，底下那层如果还亮着就会透出来（用户看到"弹出消息时背景显示日期天气"）。
    * 这里也顺手把 pointerEvents 关掉，避免隔着提醒层点到下面的按钮。
    */
-  const layerVisible = (s: IslandState) => alertItem === null && state === s;
+  const layerVisible = (s: IslandState) => !alertActive && state === s;
+
+  /**
+   * 内容层过渡（四态共用）。
+   *
+   * 非对称是刻意的：让位的旧内容**立刻**淡出（无延迟、更快），就位的新内容等岛体
+   * 长到差不多再淡入。单条规则即可实现 —— CSS 过渡读的是"变化之后"的样式，所以
+   * 变隐藏时该层 delay=0、变可见时 delay=layerInDelay。
+   *
+   * 这样"岛变大"先发生、"内容出现"后跟上：既避免历史那种新旧内容同时半透明地叠在
+   * 一起（双重曝光），也避免文字先跳出来再被窗口拉长。
+   */
+  const layerMotion = (visible: boolean): React.CSSProperties => ({
+    opacity: visible ? 1 : 0,
+    pointerEvents: visible ? "auto" : "none",
+    transition: `opacity ${visible ? MOTION.layerIn : MOTION.layerOut}ms var(--ease-out)`,
+    transitionDelay: visible ? `${MOTION.layerInDelay}ms` : "0ms",
+  });
   const isDark = settings.theme === "dark";
 
   // 外层：填满 OS 窗口（展开态四周留出 SHADOW_PAD）
@@ -836,9 +940,7 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: layerVisible("minimal") ? 1 : 0,
-            pointerEvents: layerVisible("minimal") ? "auto" : "none",
-            transition: "opacity 200ms ease",
+            ...layerMotion(layerVisible("minimal")),
             zIndex: 1,
           }}
         >
@@ -848,9 +950,7 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: layerVisible("medium") ? 1 : 0,
-            pointerEvents: layerVisible("medium") ? "auto" : "none",
-            transition: "opacity 200ms ease",
+            ...layerMotion(layerVisible("medium")),
             zIndex: 1,
           }}
         >
@@ -879,9 +979,7 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: layerVisible("expanded") ? 1 : 0,
-            pointerEvents: layerVisible("expanded") ? "auto" : "none",
-            transition: "opacity 200ms ease",
+            ...layerMotion(layerVisible("expanded")),
             zIndex: 1,
           }}
         >
@@ -897,9 +995,7 @@ export default function Island() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: layerVisible("maximal") ? 1 : 0,
-            pointerEvents: layerVisible("maximal") ? "auto" : "none",
-            transition: "opacity 200ms ease",
+            ...layerMotion(layerVisible("maximal")),
             zIndex: 1,
           }}
         >
@@ -913,12 +1009,11 @@ export default function Island() {
               alertHoverRef.current = true;
             }}
             onMouseLeave={handleAlertMouseLeave}
+            className={alertLeaving ? "alert-layer alert-layer-leaving" : "alert-layer"}
             style={{
               position: "absolute",
               inset: 0,
               zIndex: 8,
-              // 淡入 + 轻微上移，呼应"岛从顶部展开"的动作
-              animation: "alertIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
             }}
           >
             <NotificationAlert ref={alertMeasureRef} item={alertItem} />
@@ -1082,7 +1177,7 @@ function MediumContent({
           inset: 0,
           opacity: page === 0 ? 1 : 0,
           pointerEvents: page === 0 ? "auto" : "none",
-          transition: "opacity 200ms ease",
+          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
         }}
       >
         <TimePage />
@@ -1094,7 +1189,7 @@ function MediumContent({
           inset: 0,
           opacity: page === 1 ? 1 : 0,
           pointerEvents: page === 1 ? "auto" : "none",
-          transition: "opacity 200ms ease",
+          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
         }}
       >
         <WeatherPage data={weatherData} />
@@ -1106,7 +1201,7 @@ function MediumContent({
           inset: 0,
           opacity: page === 2 ? 1 : 0,
           pointerEvents: page === 2 ? "auto" : "none",
-          transition: "opacity 200ms ease",
+          transition: `opacity ${MOTION.page}ms var(--ease-out)`,
         }}
       >
         <MusicPage data={musicData} lyrics={lyrics} />

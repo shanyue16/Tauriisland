@@ -157,12 +157,21 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-bottom: 1px solid var(--island-border);
 }
 
-.island-container {
-  transition-property: width, height, border-radius, background-color,
-    opacity;
-  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
-  transition-duration: 280ms;
+/* ===== 动效 token（JS 侧镜像在 src/utils/motion.ts，两边必须同值） =====
+   窗口形变由 JS rAF 驱动（OS 窗口 CSS 管不到），内容过渡由 CSS 驱动；
+   两边共用同一组曲线与时长档位，避免"窗口用一条曲线、内容用另一条"。 */
+:root {
+  /* UI 强 ease-out（入场/出场）：比内置 ease-out 更果断 */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* 屏幕内位移的强 ease-in-out */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-base: 280ms;
+  --dur-fast: 180ms;
 }
+
+/* 原 .island-container 规则已删除：全项目没有任何元素使用该类，
+   且它声明的 transition-property 含 width/height（布局属性，会触发重排），
+   留着容易在日后被误用。窗口尺寸动画一律走 Island.tsx 的 animateWindow。 */
 
 /* 设置面板侧边栏按钮 —— 颜色全部用 CSS 变量 */
 .sidebar-tab {
@@ -211,12 +220,41 @@ input[type="range"]::-webkit-slider-thumb:hover {
    颜色取自封面主色），关键帧一并删除，避免留下死代码。 */
 
 
-/* ===== 新通知提醒入场 =====
-   岛在弹出提醒时会从收起尺寸动画到提醒尺寸，这一层再做一次淡入 + 轻微下移，
-   让"内容出现"和"岛变大"两个动作对上，避免内容先跳出来再被拉长。 */
-@keyframes alertIn {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+/* ===== 新通知提醒层（Island.tsx 的 alert 覆盖层） =====
+   提醒可能在一秒内被连着触发，所以用 transition（能从当前值重定向）而不是 keyframes
+   （keyframes 每次触发都从 0 重放）。入场用 @starting-style（新元素从"淡出+上移"的
+   起始态过渡进来），出场由 Island 的 leaving 标记走同一个反向路径 —— 出入对称。
+   原先的 @keyframes alertIn 已随这一改动删除。 */
+.alert-layer {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 220ms var(--ease-out);
+}
+.alert-layer-leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition-duration: 140ms;
+  pointer-events: none;
+}
+@starting-style {
+  .alert-layer {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 无障碍口径：去掉位移类运动，保留帮助理解状态变化的透明度过渡 */
+  .alert-layer,
+  .alert-layer-leaving,
+  .island-page {
+    transform: none;
+  }
+  .island-page {
+    transition: opacity 120ms linear;
+  }
 }
 
 /* ===== 岛内自绘 tooltip 的入场（IslandTooltip） =====
@@ -230,9 +268,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .island-page {
   position: absolute;
   inset: 0;
+  /* 页内换页：透明度用强 ease-out，位移用强 ease-in-out（屏幕内移动） */
   transition:
-    opacity 220ms ease,
-    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity 160ms var(--ease-out),
+    transform 200ms var(--ease-in-out);
   will-change: opacity, transform;
 }
 .island-page-active {
