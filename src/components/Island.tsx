@@ -84,6 +84,18 @@ const MAXIMAL_H = EXPANDED_H + SHADOW_PAD * 2;
 
 const appWindow = getCurrentWindow();
 
+/**
+ * 失焦态是否按"有音乐"呈现。
+ *
+ * **窗口宽度与内容分支必须用这一个判据**（暂停也算：内容仍在显示封面/歌名/歌手/歌词，
+ * 窗口就必须保持 MINIMAL_W_WITH_MUSIC 的两行宽度）。
+ * 历史 bug：窗口用 `active && playing`（暂停 → 220px）、内容用 `active && title`
+ * （暂停仍渲染音乐两行），于是暂停时把音乐布局塞进了 220 宽的胶囊里。
+ */
+function showsMusic(music: MusicData | null | undefined): music is MusicData {
+  return Boolean(music?.active && music.title);
+}
+
 export default function Island() {
   const { settings, state, setState, currentPage, setCurrentPage } =
     useSettings();
@@ -159,7 +171,7 @@ export default function Island() {
 
   // minimal 态有音乐时自动拉长宽度（让封面+歌名+时间能装下）。
   // 说明放在 showAlert 之前：提醒校准动画基准时要按当前态算宽度。
-  const hasMusic = musicData?.active && musicData.playing;
+  const hasMusic = showsMusic(musicData);
 
   /**
    * 显示一条提醒。
@@ -1050,13 +1062,15 @@ function MinimalContent({
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
-  const hasActiveMusic = musicData?.active && musicData.title;
+  // 与窗口宽度用的是**同一个判据**（showsMusic）：只要这里渲染音乐两行，窗口就一定是
+  // MINIMAL_W_WITH_MUSIC(320) 的两行版式，不会再出现"音乐布局被塞进 220 宽胶囊"。
+  const hasMusic = showsMusic(musicData);
   // 封面光晕色：与展开态/悬浮态同一来源（= 进度条/丝线用的那份封面主色）。
   // hook 必须放在下面的条件 return 之前（Hooks 规则）。
   const { accent } = useCoverAccent(musicData?.cover_url ?? null);
 
   // —— 有音乐时：封面 + 右侧两行（[歌名][歌手] / 当前歌词）+ 时间 ——
-  if (hasActiveMusic) {
+  if (hasMusic) {
     const miniLyric = getCurrentLyric(lyrics, (musicData.position || 0) * 1000);
     return (
       <div className="w-full h-full flex items-center gap-2.5 px-4" style={{ color }}>
