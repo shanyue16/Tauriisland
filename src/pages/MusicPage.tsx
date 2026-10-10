@@ -68,15 +68,15 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
       ) : (
         <div
           className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-          style={{ background: "rgba(255,255,255,0.06)", opacity: 0.5 }}
+          style={{ background: "var(--surface-1)", opacity: 0.5 }}
         >
           <MusicIcon size={14} style={{ color }} />
         </div>
       )}
 
-      {/* 信息区 */}
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        {/* 第一行: 标题 + 时间 */}
+      {/* 信息区：四行 —— 歌名+时间 / 歌手 / 单句歌词 / 进度条 */}
+      <div className="flex-1 min-w-0 flex flex-col gap-[2px]">
+        {/* 第一行: 歌名 + 时间 */}
         <div className="flex items-baseline gap-2 min-w-0">
           <div className="text-[12px] font-medium leading-tight truncate flex-1 min-w-0">
             {data.title || "未知曲目"}
@@ -89,14 +89,21 @@ export default function MusicPage({ data, lyrics }: MusicPageProps) {
           </div>
         </div>
 
-        {/* 第二行: 歌词 / 艺术家 */}
-        <div className="text-[10px] leading-tight truncate max-w-full opacity-75">
-          {currentLyric
-            ? currentLyric.text
-            : data.artist || (data.playing ? "♪ 正在播放" : "⏸ 已暂停")}
+        {/* 第二行: 歌手（常驻一行，不再被歌词顶掉） */}
+        <div
+          className="text-[9.5px] leading-tight truncate max-w-full"
+          style={{ color: muted, opacity: 0.9 }}
+        >
+          {data.artist || "未知艺术家"}
         </div>
 
-        {/* 第三行: 进度条 */}
+        {/* 第三行: 单句歌词（用户要求新增）—— 比歌手亮、比歌名淡，长歌词按容器宽度省略；
+            没有歌词时退化成播放状态提示。 */}
+        <div className="text-[10.5px] leading-tight truncate max-w-full" style={{ opacity: 0.95 }}>
+          {currentLyric ? currentLyric.text : data.playing ? "♪ 正在播放" : "⏸ 已暂停"}
+        </div>
+
+        {/* 第四行: 进度条 */}
         <div
           className="w-full h-[3px] rounded-full overflow-hidden flex-shrink-0"
           style={{ backgroundColor: "var(--slider-track)" }}

@@ -94,23 +94,33 @@ h1{font-size:15px;font-weight:600;margin-bottom:4px}
 .expanded .page{position:absolute;inset:0;padding:var(--pad-y) var(--pad-x);
   display:flex;gap:var(--gap)}
 
-/* 左栏：封面 + 播放器源胶囊（justify-between 把胶囊压到栏底） */
-.mu-left{width:var(--cover);flex:0 0 auto;display:flex;flex-direction:column;justify-content:space-between}
-.mu-cover{width:var(--cover);height:var(--cover);border-radius:var(--cover-radius);
+/* 背景：3 条"丝状"音频可视化铺满岛体（对应代码里的 3 个 AudioWaveLine 实例）。
+   每条都是一条极细、低透明度的折线，相位/波幅不同 → 不是同一张图复制三份。 */
+.mf-bg{position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none}
+.mf-bg svg{position:absolute;left:0;width:100%;height:30%}
+.mf-bg .f1{top:4%;opacity:.30}
+.mf-bg .f2{top:36%;opacity:.23}
+.mf-bg .f3{top:68%;opacity:.19}
+.mf-bg path{fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+/* 左栏：封面（来源徽标压在封面左下角）+ 封面下方的控件 */
+.mu-left{width:var(--cover);flex:0 0 auto;display:flex;flex-direction:column}
+.mu-cover{position:relative;width:var(--cover);height:var(--cover);border-radius:var(--cover-radius);
   background:linear-gradient(135deg,#f472b6,#60a5fa);
   box-shadow:0 0 0 1px rgba(255,255,255,.06),
              0 0 22px 4px color-mix(in srgb,var(--accent) 22%,transparent),
              0 10px 24px rgba(0,0,0,.45)}
-.mu-src{display:flex;align-items:center;gap:6px;align-self:flex-start;
-  font-size:10px;padding:4px 9px;border-radius:999px;
-  background:var(--surface-2);border:1px solid var(--theme-border);color:var(--theme-muted)}
+.mu-src{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:5px;
+  max-width:calc(100% - 20px);font-size:9.5px;padding:3px 8px;border-radius:6px;
+  background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.92)}
 .mu-src i{width:5px;height:5px;border-radius:50%;background:#4ade80;flex:0 0 auto}
 
-/* 右栏：歌名 → 歌手 → 多行歌词(flex-1 居中) → 进度条+时间 → 控件 */
-.mu-right{position:relative;flex:1;min-width:0;display:flex;flex-direction:column}
-.mu-title{font-size:var(--fs-title);font-weight:600;line-height:1.25;
+/* 右栏：顶部 [歌名][歌手] 横排 → 中间歌词(flex-1 居中) → 底部进度条+时间 */
+.mu-right{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;z-index:1}
+.mu-head{display:flex;align-items:baseline;gap:10px;min-width:0}
+.mu-title{font-size:var(--fs-title);font-weight:600;line-height:1.25;min-width:0;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mu-artist{margin-top:4px;font-size:var(--fs-artist);color:var(--theme-muted);
+.mu-artist{flex:0 0 auto;max-width:46%;font-size:var(--fs-artist);color:var(--theme-muted);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mu-lyrics{position:relative;z-index:1;flex:1;min-height:0;margin-top:10px;
   display:flex;flex-direction:column;justify-content:center;gap:var(--lyric-gap)}
@@ -131,15 +141,15 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
   box-shadow:0 0 6px rgba(255,255,255,.5)}
 .mu-times{display:flex;justify-content:space-between;margin-top:5px;
   font-size:10.5px;color:var(--theme-muted)}
-.mu-btns{display:flex;align-items:center;gap:6px;margin-top:12px;position:relative;z-index:1}
+/* 控件：在封面下方（不是与进度条同一行） */
+.mu-btns{display:flex;align-items:center;gap:6px;margin-top:14px;position:relative;z-index:1}
 .mu-btn{width:30px;height:30px;display:flex;align-items:center;justify-content:center;
   color:var(--theme-text);opacity:.85}
 .mu-play{width:var(--btn-size);height:var(--btn-size);border-radius:50%;
   display:flex;align-items:center;justify-content:center;
   background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);
   box-shadow:0 0 10px color-mix(in srgb,var(--accent) 19%,transparent)}
-/* 折线关在右栏底部（不是贴岛体底边） */
-.mu-wave{position:absolute;left:0;right:0;bottom:0;height:var(--wave-h);z-index:0}
+/* 折线不再是"右栏底部的声浪"，改成上面 .mf-bg 的三条丝状背景 */
 
 /* 底部横排页码指示器：bottom:3，所以内容下边距要 ≥ 它 */
 .dots-h{position:absolute;left:0;right:0;bottom:3px;display:flex;justify-content:center;gap:5px;z-index:6}
@@ -148,14 +158,29 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
   box-shadow:0 0 6px var(--accent-glow,rgba(255,255,255,.45))}
 
 /* ============================================================================
-   ④  悬浮态 —— 300×74，圆角 24（对应 TimePage / MusicPage / WeatherPage）
+   ④  悬浮态 —— 340×74（默认值已从 300 加宽到 340，给单句歌词留位置），圆角 24
+   音乐页四行：歌名+时间 / 歌手 / 单句歌词 / 进度条（对应 MusicPage.tsx）
    ============================================================================ */
-.medium{width:300px;height:74px}
+.medium{width:340px;height:74px}
 .medium .glass{inset:2px}
 .medium .page{position:absolute;inset:0;padding:4px var(--pad-xm-r) 4px var(--pad-xm);
   display:flex;align-items:center;gap:10px}
 .m-time{font-size:var(--fs-m-time);font-weight:600;letter-spacing:-1px;line-height:1}
 .m-sub{font-size:10px;color:var(--theme-muted);margin-top:3px}
+/* 悬浮态·音乐页 */
+.mm-cover{width:28px;height:28px;border-radius:6px;flex:0 0 auto;
+  background:linear-gradient(135deg,#f472b6,#60a5fa)}
+.mm-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mm-row1{display:flex;align-items:baseline;gap:8px;min-width:0}
+.mm-title{flex:1;min-width:0;font-size:12px;font-weight:500;line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mm-time{flex:0 0 auto;font-size:9px;color:var(--theme-muted);opacity:.5}
+.mm-artist{font-size:9.5px;color:var(--theme-muted);opacity:.9;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mm-lyric{font-size:10.5px;opacity:.95;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mm-track{width:100%;height:3px;border-radius:99px;background:var(--track);overflow:hidden;flex:0 0 auto}
+.mm-fill{height:100%;width:38%;border-radius:99px;background:var(--accent)}
 /* 竖排页码指示器：right:8，垂直居中 */
 .dots-v{position:absolute;right:8px;top:0;bottom:0;display:flex;flex-direction:column;
   justify-content:center;align-items:center;gap:4px}
@@ -217,22 +242,49 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
     <div class="cap"><b>展开态</b>　530 × 280 · 岛体圆角 <span id="capR">24</span>px · 内容内缩 3px</div>
     <div class="island expanded">
       <div class="glass"></div>
+      <!-- 背景：3 条丝状折线（对应代码里 3 个 AudioWaveLine：amplitude/phase/opacity 各不同） -->
+      <div class="mf-bg">
+        <svg class="f1" viewBox="0 0 298 38" preserveAspectRatio="none">
+          <defs><linearGradient id="wg1" x1="0" x2="1">
+            <stop offset="0" stop-color="#f472b6" stop-opacity=".12"/>
+            <stop offset="45%" stop-color="#f472b6" stop-opacity=".95"/>
+            <stop offset="1" stop-color="#60a5fa" stop-opacity=".12"/>
+          </linearGradient></defs>
+          <path d="M0 28 L16 25 L32 29 L48 20 L64 27 L80 13 L96 24 L112 18 L128 28 L144 22 L160 10 L176 21 L192 25 L208 15 L224 26 L240 19 L256 29 L272 23 L288 17 L298 24" stroke="url(#wg1)" stroke-width="0.9"/>
+        </svg>
+        <svg class="f2" viewBox="0 0 298 38" preserveAspectRatio="none">
+          <defs><linearGradient id="wg2" x1="0" x2="1">
+            <stop offset="0" stop-color="#f472b6" stop-opacity=".12"/>
+            <stop offset="45%" stop-color="#f472b6" stop-opacity=".95"/>
+            <stop offset="1" stop-color="#60a5fa" stop-opacity=".12"/>
+          </linearGradient></defs>
+          <path d="M0 30 L14 22 L28 31 L42 16 L56 28 L70 11 L84 30 L98 19 L112 26 L126 9 L140 29 L154 17 L168 31 L182 14 L196 27 L210 20 L224 32 L238 12 L252 26 L266 18 L280 30 L298 21" stroke="url(#wg2)" stroke-width="0.75"/>
+        </svg>
+        <svg class="f3" viewBox="0 0 298 38" preserveAspectRatio="none">
+          <defs><linearGradient id="wg3" x1="0" x2="1">
+            <stop offset="0" stop-color="#f472b6" stop-opacity=".12"/>
+            <stop offset="45%" stop-color="#f472b6" stop-opacity=".95"/>
+            <stop offset="1" stop-color="#60a5fa" stop-opacity=".12"/>
+          </linearGradient></defs>
+          <path d="M0 26 L20 29 L40 23 L60 30 L80 24 L100 28 L120 21 L140 30 L160 24 L180 27 L200 20 L220 29 L240 23 L260 28 L280 22 L298 27" stroke="url(#wg3)" stroke-width="1"/>
+        </svg>
+      </div>
       <div class="page">
+        <!-- 左栏：封面（媒体来源压左下角）+ 封面下方的控件 -->
         <div class="mu-left">
-          <div class="mu-cover"></div>
-          <div class="mu-src"><i></i>网易云音乐</div>
+          <div class="mu-cover"><span class="mu-src"><i></i>网易云音乐</span></div>
+          <div class="mu-btns">
+            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></div>
+            <div class="mu-play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></div>
+            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></div>
+          </div>
         </div>
+        <!-- 右栏：顶部 [歌名][歌手] 横排 → 中间歌词 → 底部进度条 + 时间 -->
         <div class="mu-right">
-          <svg class="mu-wave" viewBox="0 0 298 38" preserveAspectRatio="none">
-            <defs><linearGradient id="wg" x1="0" x2="1">
-              <stop offset="0" stop-color="#f472b6" stop-opacity=".55"/>
-              <stop offset="1" stop-color="#60a5fa" stop-opacity=".55"/>
-            </linearGradient></defs>
-            <path d="M0 28 L16 25 L32 29 L48 20 L64 27 L80 13 L96 24 L112 18 L128 28 L144 22 L160 10 L176 21 L192 25 L208 15 L224 26 L240 19 L256 29 L272 23 L288 17 L298 24"
-                  fill="none" stroke="url(#wg)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <div class="mu-title">起风了</div>
-          <div class="mu-artist">买辣椒也用券 · 起风了</div>
+          <div class="mu-head">
+            <span class="mu-title">起风了</span>
+            <span class="mu-artist">买辣椒也用券 · 起风了</span>
+          </div>
           <div class="mu-lyrics">
             <div class="ly">这一路上走走停停</div>
             <div class="ly d1">顺着少年漂流的痕迹</div>
@@ -244,26 +296,27 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
             <div class="mu-track"><div class="mu-fill"></div><div class="mu-thumb"></div></div>
             <div class="mu-times tnum"><span>1:42</span><span>5:12</span></div>
           </div>
-          <div class="mu-btns">
-            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></div>
-            <div class="mu-play"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></div>
-            <div class="mu-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></div>
-          </div>
         </div>
       </div>
       <div class="dots-h"><i class="on"></i><i></i><i></i></div>
     </div>
   </div>
 
-  <!-- ===== 悬浮态 ===== -->
+  <!-- ===== 悬浮态（音乐页：四行，含新增的单句歌词） ===== -->
   <div class="cell">
-    <div class="cap"><b>悬浮态</b>　300 × 74 · 圆角 24 · 右侧 26px 是指示器通道</div>
+    <div class="cap"><b>悬浮态 · 音乐页</b>　340 × 74 · 圆角 24 · 右侧 26px 是指示器通道</div>
     <div class="island medium">
       <div class="glass"></div>
       <div class="page">
-        <div style="flex:1;min-width:0">
-          <div class="m-time tnum">11:21</div>
-          <div class="m-sub">周五 · 10月9日 · 多云 21°</div>
+        <div class="mm-cover"></div>
+        <div class="mm-info">
+          <div class="mm-row1">
+            <span class="mm-title">起风了</span>
+            <span class="mm-time tnum">1:42/5:12</span>
+          </div>
+          <div class="mm-artist">买辣椒也用券</div>
+          <div class="mm-lyric">迈出车站的前一刻</div>
+          <div class="mm-track"><div class="mm-fill"></div></div>
         </div>
         <div class="dots-v"><i class="on"></i><i></i><i></i></div>
       </div>

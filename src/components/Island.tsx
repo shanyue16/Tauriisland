@@ -1207,12 +1207,40 @@ function MusicDetailView({
 
   return (
     <div className="w-full h-full relative overflow-hidden" style={{ color }}>
-      {/* 布局（用户要求重排）：左栏 = 封面 + 播放器源；右栏 = 歌名 / 歌手 / 多行歌词 /
-          进度条 / 时间 / 控件。四周留 16~18px —— 原实现折线贴岛体底边、控制台只留
-          pb-9px，看起来顶在窗口边缘上。 */}
-      <div className="w-full h-full flex flex-row gap-[20px] px-[18px] pt-[16px] pb-[16px]">
-        {/* 左栏：封面在上、播放器源徽标贴栏底（来源应用升为独立元素，不再压成封面角标） */}
-        <div className="shrink-0 flex flex-col justify-between" style={{ width: 170 }}>
+      {/* 背景：3 条"丝状"音频可视化铺满岛体（用户要求 2~4 条）。
+          都关掉镜像线、只留细线 + 低透明度；相位与波幅各不相同，
+          避免一眼看出是同一张图复制三份。封面不透明，左栏那部分自然被盖住。 */}
+      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
+        <div style={{ position: "absolute", left: 0, right: 0, top: "4%", height: "30%" }}>
+          <AudioWaveLine
+            color={accentColor} color2={accentColor2} playing={!!data.playing}
+            amplitude={0.95} phase={0} thickness={0.9} opacityScale={0.55} mirror={false}
+          />
+        </div>
+        <div style={{ position: "absolute", left: 0, right: 0, top: "36%", height: "30%" }}>
+          <AudioWaveLine
+            color={accentColor} color2={accentColor2} playing={!!data.playing}
+            amplitude={1.2} phase={1.9} thickness={0.75} opacityScale={0.42} mirror={false}
+          />
+        </div>
+        <div style={{ position: "absolute", left: 0, right: 0, top: "68%", height: "30%" }}>
+          <AudioWaveLine
+            color={accentColor} color2={accentColor2} playing={!!data.playing}
+            amplitude={0.7} phase={3.4} thickness={1} opacityScale={0.34} mirror={false}
+          />
+        </div>
+      </div>
+
+      {/* 内容层（用户要求的新布局）：
+          左栏 = 封面（媒体来源压在封面左下角）+ 封面下方的控件
+          右栏 = 顶部 [歌名][歌手] 横向排列 → 中间歌词 → 底部进度条 + 时间
+          四周留 16~18px，任何元素都不贴岛体边缘。 */}
+      <div
+        className="w-full h-full relative flex flex-row gap-[20px] px-[18px] pt-[16px] pb-[16px]"
+        style={{ zIndex: 1 }}
+      >
+        {/* 左栏 */}
+        <div className="shrink-0 flex flex-col" style={{ width: 170 }}>
           {/* 封面 = 这一页唯一的重心，与折线同源的光晕 */}
           <div
             className="relative shrink-0 overflow-hidden"
@@ -1244,53 +1272,87 @@ function MusicDetailView({
               </div>
             )}
 
+            {/* 媒体来源：压在封面左下角（用户要求）。深色半透明底 + 发丝边，
+                不管封面明暗都读得清；左侧圆点跟随播放状态。 */}
+            {data.app_name && (
+              <span
+                className="absolute flex items-center gap-[5px] max-w-[calc(100%-20px)]"
+                style={{
+                  left: 10,
+                  bottom: 10,
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                  fontSize: 9.5,
+                  letterSpacing: 0.2,
+                  background: "rgba(0,0,0,0.45)",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  color: "rgba(255,255,255,0.92)",
+                }}
+              >
+                <i
+                  style={{
+                    width: 5, height: 5, borderRadius: "50%", flex: "0 0 auto",
+                    background: data.playing ? "#4ade80" : "rgba(210,210,210,0.55)",
+                  }}
+                />
+                <span className="truncate">{data.app_name}</span>
+              </span>
+            )}
           </div>
 
-          {/* 播放器源：独立徽标（原先是压在封面左下角的小角标，现在是左栏的收尾元素）。
-              左侧小圆点跟随播放状态：在播=绿、暂停=灰。 */}
-          {data.app_name && (
-            <span
-              className="self-start flex items-center gap-[6px] max-w-full"
+          {/* 控件：移到封面下方（用户要求） */}
+          <div className="flex items-center gap-[6px]" style={{ marginTop: 14 }}>
+            <button
+              onClick={handlePrev}
+              aria-label="上一首"
+              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button
+              onClick={handlePlayPause}
+              aria-label={data.playing ? "暂停" : "播放"}
+              className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
               style={{
-                padding: "4px 9px",
-                borderRadius: 999,
-                fontSize: 10,
-                letterSpacing: 0.2,
+                width: 38, height: 38,
                 background: "var(--surface-2)",
-                border: "1px solid var(--island-border)",
-                color: muted,
+                border: `1px solid ${accentColor}40`,
+                boxShadow: `0 0 10px ${accentColor}30`,
+                color: "var(--island-text)",
               }}
             >
-              <i
-                style={{
-                  width: 5,
-                  height: 5,
-                  borderRadius: "50%",
-                  flex: "0 0 auto",
-                  background: data.playing ? "#4ade80" : "rgba(127,127,127,0.6)",
-                }}
-              />
-              <span className="truncate">{data.app_name}</span>
-            </span>
-          )}
+              {data.playing ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              )}
+            </button>
+            <button
+              onClick={handleNext}
+              aria-label="下一首"
+              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+          </div>
         </div>
 
-        {/* 右栏：歌名（文字焦点）→ 歌手·专辑 → 多行歌词（flex-1，垂直居中）→
-            进度条 + 时间 → 控件。折线关在本栏底部当"声音地板"，不再贴岛体底边。 */}
+        {/* 右栏：顶部 [歌名][歌手] 横排 → 中间歌词（flex-1 垂直居中）→ 底部进度条 + 时间 */}
         <div className="relative flex-1 min-w-0 flex flex-col">
-          <div
-            className="absolute pointer-events-none"
-            style={{ left: 0, right: 0, bottom: 0, height: 38, zIndex: 0 }}
-          >
-            <AudioWaveLine color={accentColor} color2={accentColor2} playing={!!data.playing} />
-          </div>
-
-          <div className="text-[19px] font-semibold leading-tight truncate" style={{ zIndex: 1 }}>
-            {data.title || "未知曲目"}
-          </div>
-          <div className="text-[11.5px] truncate mt-[4px]" style={{ color: muted, zIndex: 1 }}>
-            {data.artist || "未知艺术家"}
-            {data.album ? ` · ${data.album}` : ""}
+          {/* 顶部横排：歌名是焦点（大、半粗），歌手·专辑紧随其后并限宽，长名自动省略 */}
+          <div className="flex items-baseline gap-[10px] min-w-0" style={{ zIndex: 1 }}>
+            <div className="text-[19px] font-semibold leading-tight truncate min-w-0">
+              {data.title || "未知曲目"}
+            </div>
+            <div
+              className="text-[11.5px] leading-tight truncate shrink-0"
+              style={{ color: muted, maxWidth: "46%" }}
+            >
+              {data.artist || "未知艺术家"}
+              {data.album ? ` · ${data.album}` : ""}
+            </div>
           </div>
           <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
 
@@ -1327,45 +1389,6 @@ function MusicDetailView({
               <span>{formatTime(data.position)}</span>
               <span>{hasRealDuration ? formatTime(data.duration) : "—:—"}</span>
             </div>
-          </div>
-
-          {/* 控件：上一首 / 播放暂停 / 下一首（原先是与进度条挤在同一行的左侧，
-              现在独立成行、并给 12px 与进度条的间隔） */}
-          <div className="flex items-center gap-[6px] mt-[12px]" style={{ zIndex: 1 }}>
-            <button
-              onClick={handlePrev}
-              aria-label="上一首"
-              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-            </button>
-            <button
-              onClick={handlePlayPause}
-              aria-label={data.playing ? "暂停" : "播放"}
-              className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
-              style={{
-                width: 38, height: 38,
-                background: "var(--surface-2)",
-                border: `1px solid ${accentColor}40`,
-                boxShadow: `0 0 10px ${accentColor}30`,
-                color: "var(--island-text)",
-              }}
-            >
-              {data.playing ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              )}
-            </button>
-            <button
-              onClick={handleNext}
-              aria-label="下一首"
-              className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-              style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-            </button>
           </div>
         </div>
       </div>

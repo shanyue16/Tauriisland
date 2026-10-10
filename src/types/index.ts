@@ -97,7 +97,9 @@ export const DEFAULT_SETTINGS: Settings = {
   opacity: 100,
   horizontalPosition: "center",
   minimalWidth: 220,
-  mediumWidth: 300,
+  // 340（原 300）：悬浮态音乐页要放"歌名+时间 / 歌手 / 单句歌词 / 进度条"四行，
+  // 歌词那行需要横向空间，否则长句会被省略号切得太早。
+  mediumWidth: 340,
 
   hoverDelay: 100,
   collapseDelay: 1500,

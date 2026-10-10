@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 /**
- * 展开态背景音频可视化：**折线图**（替换原先的柱状图）。
+ * 音频可视化折线（模拟频谱，非真实 FFT）。
  *
- * - 无真实音频分析，沿用"模拟频谱"思路：多正弦叠加，视觉上是流动的波形。
+ * - 无真实音频分析：多正弦叠加 + sin(πp) 端点包络，视觉上是流动的波形。
  * - 颜色由外部传入（取自封面主色），保证与封面光晕同色。
  * - 动画用 requestAnimationFrame 且限帧 ~30fps，暂停时退化为一条静态低幅折线
  *   （不跑 rAF，不占 CPU）；卸载时清理 rAF。
- * - 不在动画里做任何 canvas/取色计算。
+ * - **同屏可放多条**：amplitude / phase / thickness / opacityScale / mirror 用来
+ *   把同一条折线调成"丝状"背景的不同层次（展开态音乐页用它铺 3 条）；
+ *   渐变 id 用 useId 生成，避免多条实例共用同一个 <linearGradient> 定义。
  */
 
 const POINTS = 48; // 采样点数量
@@ -16,21 +18,22 @@ const H = 40; // viewBox 高
 const FPS = 30;
 const FRAME_MS = 1000 / FPS;
 
-function buildPoints(t: number, playing: boolean): string {
+function buildPoints(t: number, playing: boolean, amplitude: number, phase: number): string {
   const out: string[] = [];
   for (let i = 0; i < POINTS; i++) {
     const p = i / (POINTS - 1);
     const x = p * W;
     // 三个不同频率/相位的正弦叠加 → 近似频谱的起伏；两端用 sin(pi*p) 收敛，
-    // 避免折线在左右边缘被截断出突兀的竖线。
+    // 避免折线在左右边缘被截断出突兀的竖线。phase 让同屏多条互不同步。
     const envelope = Math.sin(Math.PI * p);
-    const amp = playing
-      ? envelope *
+    const amp =
+      (playing
+        ? envelope *
           (5.5 +
-            4.2 * Math.sin(t * 1.7 + p * 9.1) +
-            2.6 * Math.sin(t * 2.9 + p * 17.3) +
-            1.8 * Math.sin(t * 0.9 + p * 4.7))
-      : envelope * (2.6 + 0.7 * Math.sin(p * 9.1));
+            4.2 * Math.sin(t * 1.7 + p * 9.1 + phase) +
+            2.6 * Math.sin(t * 2.9 + p * 17.3 + phase * 0.6) +
+            1.8 * Math.sin(t * 0.9 + p * 4.7 + phase * 1.3))
+        : envelope * (2.6 + 0.7 * Math.sin(p * 9.1 + phase))) * amplitude;
     const y = H - 3 - Math.max(0.6, amp);
     out.push(`${x.toFixed(2)},${y.toFixed(2)}`);
   }
@@ -41,42 +44,60 @@ export default function AudioWaveLine({
   color,
   color2,
   playing,
+  /** 波幅倍率（1 = 默认）。丝状背景用 0.6~1.2 拉开层次。 */
+  amplitude = 1,
+  /** 相位偏移（弧度），让同屏多条不同步。 */
+  phase = 0,
+  /** 描边宽度（px，vectorEffect=non-scaling-stroke 所以是真实像素）。 */
+  thickness = 1,
+  /** 在基础透明度上再乘一个系数。 */
+  opacityScale = 1,
+  /** 是否画下方镜像线（丝状背景通常关掉，留一条干净的线更"丝"）。 */
+  mirror = true,
 }: {
   color: string;
   color2: string;
   playing: boolean;
+  amplitude?: number;
+  phase?: number;
+  thickness?: number;
+  opacityScale?: number;
+  mirror?: boolean;
 }) {
-  const [points, setPoints] = useState(() => buildPoints(0, false));
+  const [points, setPoints] = useState(() => buildPoints(0, false, amplitude, phase));
   const rafRef = useRef<number | null>(null);
   const lastRef = useRef(0);
+  // useId 会产出 ":r1:" 这类含冒号的 id，去掉冒号再拼进 url(#...) 更稳妥
+  const gradId = `wave-${useId().replace(/:/g, "")}`;
 
   useEffect(() => {
     if (!playing) {
       // 暂停：静态低幅折线，不启动动画循环
-      setPoints(buildPoints(0, false));
+      setPoints(buildPoints(0, false, amplitude, phase));
       return;
     }
     const tick = (now: number) => {
       rafRef.current = window.requestAnimationFrame(tick);
       if (now - lastRef.current < FRAME_MS) return; // 限帧 ~30fps
       lastRef.current = now;
-      setPoints(buildPoints(now / 1000, true));
+      setPoints(buildPoints(now / 1000, true, amplitude, phase));
     };
     rafRef.current = window.requestAnimationFrame(tick);
     return () => {
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [playing]);
-
-  const gradId = "island-wave-grad";
+  }, [playing, amplitude, phase]);
 
   return (
     <svg
       className="absolute inset-0 w-full h-full pointer-events-none"
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
-      style={{ opacity: playing ? 0.55 : 0.22, transition: "opacity 400ms ease" }}
+      style={{
+        opacity: (playing ? 0.55 : 0.22) * opacityScale,
+        transition: "opacity 400ms ease",
+      }}
       aria-hidden
     >
       <defs>
@@ -92,7 +113,7 @@ export default function AudioWaveLine({
         points={points}
         fill="none"
         stroke={`url(#${gradId})`}
-        strokeWidth={1}
+        strokeWidth={thickness}
         strokeLinecap="round"
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
@@ -100,17 +121,19 @@ export default function AudioWaveLine({
       />
 
       {/* 低透明度镜像，制造"流动"层次 */}
-      <polyline
-        points={points}
-        fill="none"
-        stroke={color2}
-        strokeOpacity={0.22}
-        strokeWidth={0.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-        transform={`translate(0 ${H}) scale(1 -1)`}
-      />
+      {mirror && (
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color2}
+          strokeOpacity={0.22 * opacityScale}
+          strokeWidth={thickness * 0.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+          transform={`translate(0 ${H}) scale(1 -1)`}
+        />
+      )}
     </svg>
   );
 }
