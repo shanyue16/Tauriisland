@@ -239,7 +239,7 @@ function Row({
         <div
           onClick={isLong ? onToggleText : undefined}
           style={{ cursor: isLong ? "pointer" : "default" }}
-          title={isLong ? (expandedText ? "点击收起" : "点击展开全文") : undefined}
+          data-tip={isLong ? (expandedText ? "点击收起" : "点击展开全文") : undefined}
         >
           {/* 标题是焦点：纯白、常规字重（不用 bold 堆重量，靠对比度建立层级） */}
           <div

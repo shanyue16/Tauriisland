@@ -44,7 +44,8 @@ export default function PageIndicator({
             type="button"
             aria-label={`第 ${i + 1} 页`}
             aria-current={active ? "page" : undefined}
-            title={`第 ${i + 1} 页`}
+            data-tip={`第 ${i + 1} 页`}
+            data-tip-pos={vertical ? "bottom" : "top"}
             onClick={(e) => {
               e.stopPropagation();
               onSelect?.(i);

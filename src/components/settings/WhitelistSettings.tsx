@@ -110,7 +110,8 @@ export default function WhitelistSettings() {
                 <span>{name}</span>
                 <button
                   type="button"
-                  title={`移除 ${name}`}
+                  aria-label={`移除 ${name}`}
+                  data-tip={`移除 ${name}`}
                   onClick={() => removeEntry(name)}
                   className="flex items-center justify-center cursor-pointer"
                   style={{

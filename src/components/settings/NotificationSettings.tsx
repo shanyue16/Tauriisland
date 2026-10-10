@@ -228,7 +228,8 @@ export default function NotificationSettings() {
                 </span>
                 <button
                   type="button"
-                  title={`移除 ${name}`}
+                  aria-label={`移除 ${name}`}
+                  data-tip={`移除 ${name}`}
                   onClick={() => removeEntry(name)}
                   className="flex items-center justify-center cursor-pointer"
                   style={{
@@ -305,7 +306,7 @@ export default function NotificationSettings() {
                     color: "var(--island-text)",
                     opacity: exists(c.appId) ? 0.4 : 1,
                   }}
-                  title={c.appId}
+                  data-tip={c.appId}
                 >
                   {c.appName}
                 </button>

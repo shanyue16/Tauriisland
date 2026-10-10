@@ -190,6 +190,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ===== 岛内自绘 tooltip 的入场（IslandTooltip） =====
+   只动 opacity：气泡的定位靠 transform，若这里也写 transform 会互相覆盖。 */
+@keyframes tipIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* ===== 分页容器（medium / expanded 三页共用，透明度 + 轻微位移过渡） ===== */
 .island-page {
   position: absolute;

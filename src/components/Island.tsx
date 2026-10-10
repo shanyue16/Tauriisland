@@ -10,6 +10,7 @@ import MusicPage from "../pages/MusicPage";
 import CalendarPage from "../pages/CalendarPage";
 import NotificationPage from "../pages/NotificationPage";
 import NotificationAlert from "./NotificationAlert";
+import IslandTooltip from "./IslandTooltip";
 import { fetchNotifications } from "../services/notifications";
 import { isBlacklisted, type NotificationItem } from "../types/notification";
 import PageIndicator from "./PageIndicator";
@@ -760,6 +761,10 @@ export default function Island() {
           按用户要求"看起来像窗口的阴影像其他状态一样"，移除该装饰边框。 */}
 
       <div style={innerStyle}>
+        {/* 统一的悬浮提示层：控件的 title 全部换成 data-tip，由它绘制（四态共用）。
+            zIndex 50 高于内容层与提醒层，四条边越界都会自动钳回岛体内。 */}
+        <IslandTooltip />
+
         {/* 四层内容同时 mounted，用 opacity + pointerEvents 切换可见性 */}
         <div
           style={{

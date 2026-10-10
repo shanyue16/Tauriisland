@@ -476,7 +476,8 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             <button
               type="button"
               onClick={goToday}
-              title="回到今天"
+              data-tip="回到今天"
+              data-tip-pos="bottom"
               className="text-[10px] leading-none px-2 py-1 rounded-[6px] cursor-pointer shrink-0 ml-1.5"
               style={{
                 background: "rgba(255,255,255,0.09)",
@@ -570,7 +571,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                   boxShadow,
                   transition: "background-color 150ms ease, box-shadow 150ms ease",
                 }}
-                title={
+                data-tip={
                   info
                     ? `${key} ${info.weekday_cn ?? ""} ${info.lunar_month_name ?? ""}${info.lunar_day_name ?? ""}`
                     : key
@@ -609,10 +610,10 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                   </span>
                 )}
 
-                {/* 右上角角标（用户要求保留：一个月里哪几天休、哪几天调休上班要能一眼扫出来） */}
-                {adjust && (
-                  <CellChip text="班" background={isToday ? "rgba(0,0,0,0.42)" : BADGE_WORK_BG} />
-                )}
+                {/* 右上角角标（用户要求保留：一个月里哪几天休、哪几天调休上班要能一眼扫出来）
+                    班 = 始终红底白字（今天那格是蓝底，红牌在蓝底上最清楚；用户反馈过
+                    跟着格子变蓝底看不清）；休 = 蓝底蓝牌会隐形，所以今天那格改半透明黑底。 */}
+                {adjust && <CellChip text="班" background={BADGE_WORK_BG} />}
                 {!adjust && rest && (
                   <CellChip text="休" background={isToday ? "rgba(0,0,0,0.42)" : ACCENT} />
                 )}
@@ -835,7 +836,8 @@ function NavButton({
     <button
       type="button"
       aria-label={label}
-      title={label}
+      data-tip={label}
+      data-tip-pos="bottom"
       onClick={onClick}
       className="flex items-center justify-center rounded-[6px] cursor-pointer"
       style={{
