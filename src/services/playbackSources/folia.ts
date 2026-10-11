@@ -10,7 +10,7 @@
  *
  * 硬塞进 `PlaybackSource` 会让接口变形（要么给 `fetch` 加一个别人不需要的 want 参数，
  * 要么返回一个 track 全是 null 的快照）。所以这里是一个**用途单一的模块**，
- * 入口只有一个：`fetchLyricsFromFolia(want)`。
+ * 入口只有两个：`fetchLyricsFromFolia(want)` 与诊断用的 `probeLocalLyric()`。
  *
  * ## 契约要点（来自 Folia 官方 docs/lyric-api.md + 本机实测）
  * - 无鉴权；**`200 OK` + JSON `null` 是正常态**（没在播 / 歌词加载中 / 无歌词），不是故障
@@ -24,24 +24,18 @@
  * ① **曲目匹配**：与 SMTC 曲目对不上就整份丢弃（用 `isSameTrack`）
  * ② **可降级**：任何失败都必须静默返回 null，让 `lyrics.ts` 继续走原来的网络级联
  * ③ **过滤**：标题卡 / 零长度行 / `......` 占位行展示前都要去掉
+ *
+ * ## 静默 ≠ 无迹
+ * 所有失败都静默降级，但**每一次尝试的结论都会记进 `status.ts`**，
+ * 由「设置 → 歌曲 → 本地歌词接口」显示 —— 否则「没拿到逐字歌词」根本没法排查。
  */
 
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { useSettings } from "../../stores/settings";
 import type { LyricLine, LyricWord } from "../../types/lyrics";
 import { isSameTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
-
-/**
- * 默认端点。**P1 阶段先用常量**；等「设置」那一步落地后改为读
- * `settings.localLyricEndpoint`（并加 `localLyricEnabled` 开关）。
- */
-const ENDPOINT = "http://127.0.0.1:32109/v1/lyric";
-
-/**
- * 真超时（不是 `Promise.race` 那种假超时 —— 请求会被真正 abort）。
- * 本机回环服务不该慢：没跑起来时 ECONNREFUSED 是毫秒级，界面不该为它等待。
- */
-const TIMEOUT_MS = 1200;
+import { recordLocalLyricStatus } from "./status";
 
 const LOG = "[Folia]";
 
@@ -87,6 +81,17 @@ function msOf(seconds: number, offsetMs: number): number {
   return Math.round(seconds * 1000) + offsetMs;
 }
 
+/** 当前设置（每次调用现读，改设置不需要重建任何东西） */
+function readConfig() {
+  const s = useSettings.getState().settings;
+  return {
+    enabled: s.localLyricEnabled,
+    endpoint: s.localLyricEndpoint,
+    timeoutMs: s.localLyricTimeoutMs,
+    wordByWord: s.wordByWordEnabled,
+  };
+}
+
 /**
  * 把 `"<曲名> - <歌手1>/<歌手2>"` 解析成候选。
  *
@@ -111,20 +116,39 @@ function identityCandidates(text: string): Candidate[] {
   return out;
 }
 
-/** 带真超时的 GET。任何异常（含 abort / 半截 JSON / 连接被拒）都归到 null。 */
-async function requestLyric(): Promise<RawLyric | null> {
+/** 从响应里读出「接口自己在放哪首歌」——顶层可选字段优先，缺失才看 lines[0] */
+function readIdentity(raw: RawLyric, firstLineText: string): string | null {
+  const t = str(raw.title).trim();
+  const a = str(raw.artist).trim();
+  if (t) return a ? `${t} / ${a}` : t;
+  return firstLineText.trim() || null;
+}
+
+type FetchResult =
+  | { kind: "ok"; raw: RawLyric | null }
+  | { kind: "error"; detail: string };
+
+/**
+ * 带**真超时**的 GET（不是 `Promise.race` 那种假超时 —— 请求会被真正 abort）。
+ * 本机回环服务不该慢：没跑起来时 ECONNREFUSED 是毫秒级，界面不该为它等待。
+ * 任何异常（abort / 半截 JSON / 连接被拒 / 被 ACL 挡）都归到 error。
+ */
+async function requestLyric(endpoint: string, timeoutMs: number): Promise<FetchResult> {
   const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const resp = await tauriFetch(ENDPOINT, { signal: ctrl.signal });
-    if (!resp.ok) return null;
+    const resp = await tauriFetch(endpoint, { signal: ctrl.signal });
+    if (!resp.ok) return { kind: "error", detail: `HTTP ${resp.status}` };
     const json = (await resp.json()) as unknown;
     // 200 + null 是官方定义的正常态：没在播 / 加载中 / 无歌词
-    if (json === null || typeof json !== "object") return null;
-    return json as RawLyric;
-  } catch {
-    // 未启用 / 端口被占 = 连接失败；半截 JSON = 解析失败。都属于「静默降级」范畴。
-    return null;
+    if (json === null || typeof json !== "object") return { kind: "ok", raw: null };
+    return { kind: "ok", raw: json as RawLyric };
+  } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    return {
+      kind: "error",
+      detail: name === "AbortError" ? `超时 ${timeoutMs}ms` : (e instanceof Error ? e.message : String(e)),
+    };
   } finally {
     window.clearTimeout(timer);
   }
@@ -145,59 +169,75 @@ function mapWords(raw: unknown, offsetMs: number): LyricWord[] {
   return out;
 }
 
+/** 取数 + 解析，不做曲目核对。返回 null 表示「这次没有可用歌词」。 */
+async function loadRaw(cfg: ReturnType<typeof readConfig>) {
+  const res = await requestLyric(cfg.endpoint, cfg.timeoutMs);
+  if (res.kind === "error") return { error: res.detail } as const;
+  if (res.raw === null) return { idle: true } as const;
+  const raw = res.raw;
+  const rawLines = Array.isArray(raw.lines) ? (raw.lines as RawLine[]) : [];
+  if (rawLines.length === 0) return { idle: true } as const;
+  return { raw, rawLines } as const;
+}
+
 /**
  * 取 Folia 的歌词并核对曲目身份。
  *
  * 命中（且确认是同一首歌）→ `ProviderLyrics`；其余一切情况（没在跑、没在播、
  * 放的是别的歌、只有占位行）→ `null`，让调用方继续走网络级联。
- * **永不抛异常。**
+ * **永不抛异常。** 每次结果都会记进 `status.ts` 供设置页展示。
  */
 export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyrics | null> {
+  const label = `${want.title} / ${want.artist}`;
   // 身份核对以曲名为准（空曲名的 titleScore 恒为 0），没曲名就别浪费这次请求
   if (!want.title) return null;
 
-  const raw = await requestLyric();
-  if (!raw) return null;
+  const cfg = readConfig();
+  if (!cfg.enabled) {
+    recordLocalLyricStatus({ outcome: "disabled", want: label, got: null });
+    return null;
+  }
 
-  const rawLines = Array.isArray(raw.lines) ? (raw.lines as RawLine[]) : [];
-  if (rawLines.length === 0) return null;
-
-  const topTitle = str(raw.title).trim();
-  const topArtist = str(raw.artist).trim();
+  const loaded = await loadRaw(cfg);
+  if ("error" in loaded) {
+    recordLocalLyricStatus({ outcome: "unreachable", want: label, got: null, detail: loaded.error });
+    return null;
+  }
+  if ("idle" in loaded) {
+    recordLocalLyricStatus({ outcome: "idle", want: label, got: null });
+    return null;
+  }
+  const { raw, rawLines } = loaded;
+  const got = readIdentity(raw, str(rawLines[0]?.text));
 
   // —— ① 身份核对：优先用官方可选字段，缺失才回退解析 lines[0] ——
-  if (topTitle) {
-    const ok = isSameTrack(
-      { id: "top", title: topTitle, artists: topArtist ? [topArtist] : [] },
-      want
-    );
-    if (!ok) {
-      console.info(`${LOG} 曲目不匹配（Folia 在放别的歌），丢弃`);
-      return null;
-    }
-  } else {
-    const first = identityCandidates(str(rawLines[0]?.text));
-    if (!first.some((c) => isSameTrack(c, want))) {
-      console.info(`${LOG} 曲目不匹配（无法确认 Folia 放的就是这首歌），丢弃`);
-      return null;
-    }
+  const topTitle = str(raw.title).trim();
+  const topArtist = str(raw.artist).trim();
+  const firstCandidates = identityCandidates(str(rawLines[0]?.text));
+
+  const matched = topTitle
+    ? isSameTrack({ id: "top", title: topTitle, artists: topArtist ? [topArtist] : [] }, want)
+    : firstCandidates.some((c) => isSameTrack(c, want));
+
+  if (!matched) {
+    recordLocalLyricStatus({ outcome: "mismatch", want: label, got });
+    console.info(`${LOG} 曲目不匹配，丢弃（接口在放：${got ?? "未知"}）`);
+    return null;
   }
 
   // —— ② 标题卡过滤 ——
   // 只在第 0 行判定、且**必须内容吻合**才丢：官方明确 lines 是按时间排序的歌词行，
-  // lines[0] 不保证是元数据。实测两次样本它都是标题卡，形如
-  // "ひとり旅 - 瀬名航/鎖那 (さな)"，而且**带真实时长与逐字时间轴**（0→0.608s），
+  // lines[0] 不保证是元数据。实测样本它都是标题卡，形如
+  // "还在假装 - 刀酱"，而且**带真实时长与逐字时间轴**（0→0.6s），
   // 所以「零长度」「占位行」两类过滤都抓不到它，只能靠曲目评分识别。
-  const metaCandidates = identityCandidates(str(rawLines[0]?.text));
-  const metaIndex = metaCandidates.some((c) => isSameTrack(c, want)) ? 0 : -1;
+  const metaIndex = firstCandidates.some((c) => isSameTrack(c, want)) ? 0 : -1;
 
   // —— ③ 换算 ——
   const offsetMs = num(raw.offset) ?? 0;
   // 逐字与否在这里一次性决定：不做逐字就把 words 丢掉。
   // 这样 UI 只需判「这一行有没有 words」，不必把一个布尔量穿透四层 props；
   // 判据是 wordByWord（原生 vs 合成），**不是**「有没有 words」—— 后者永远为真。
-  // 设置接入后这里再与 settings.wordByWordEnabled 相与。
-  const nativeWordByWord = raw.wordByWord === true;
+  const keepWords = raw.wordByWord === true && cfg.wordByWord;
 
   const lines: LyricLine[] = [];
   for (let i = 0; i < rawLines.length; i++) {
@@ -219,7 +259,7 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     if (translation) line.translation = translation;
     const romanization = str(rl?.romanization).trim();
     if (romanization) line.romanization = romanization;
-    if (nativeWordByWord) {
+    if (keepWords) {
       const words = mapWords(rl?.words, offsetMs);
       if (words.length > 0) line.words = words;
     }
@@ -227,14 +267,39 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     lines.push(line);
   }
 
-  if (lines.length === 0) return null;
+  if (lines.length === 0) {
+    recordLocalLyricStatus({ outcome: "empty", want: label, got });
+    return null;
+  }
 
   // 官方保证有序；getCurrentLyric 的二分依赖有序，防御式再排一次
   lines.sort((a, b) => a.time_ms - b.time_ms);
 
+  recordLocalLyricStatus({ outcome: "ok", want: label, got });
   console.info(
-    `${LOG} 命中 "${want.title} / ${want.artist}"（${lines.length} 行，原生逐字=${nativeWordByWord}，offset=${offsetMs}ms）`
+    `${LOG} 命中 "${label}"（${lines.length} 行，逐字=${keepWords}，offset=${offsetMs}ms）`
   );
   // Folia 不给时长（它不播音频，只镜像别的播放器）→ duration 交回调用方已有的来源
   return { lines, duration: null };
+}
+
+/**
+ * 连通性探测 —— 只给设置页的「检测」按钮用。
+ *
+ * 与 `fetchLyricsFromFolia` 分开：探测**不关心曲目对不对**，
+ * 只回答「这个地址现在能不能取到歌词」，这样用户能一眼分清是「服务没开」还是「放的不是同一首」。
+ */
+export async function probeLocalLyric(): Promise<{ ok: boolean; detail: string }> {
+  const cfg = readConfig();
+  if (!cfg.enabled) return { ok: false, detail: "已在设置里关闭" };
+  const res = await requestLyric(cfg.endpoint, cfg.timeoutMs);
+  if (res.kind === "error") return { ok: false, detail: res.detail };
+  if (res.raw === null) return { ok: true, detail: "接口正常，但当前没有歌词（没在播 / 加载中）" };
+  const rawLines = Array.isArray(res.raw.lines) ? (res.raw.lines as RawLine[]) : [];
+  if (rawLines.length === 0) return { ok: true, detail: "接口正常，但当前没有歌词" };
+  const identity = readIdentity(res.raw, str(rawLines[0]?.text));
+  return {
+    ok: true,
+    detail: `接口正常，正在放：${identity ?? "未知"}（${rawLines.length} 行）`,
+  };
 }

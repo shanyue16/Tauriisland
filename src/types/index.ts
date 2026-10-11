@@ -75,6 +75,25 @@ export interface Settings {
    */
   musicWhitelist: string[];
 
+  // 本地歌词接口（本机第三方程序的兼容接口，目前实现的是 Folia 的 32109）
+  /**
+   * 是否启用本地歌词接口。关掉＝完全不请求本机服务（级联只剩网络源）。
+   * 默认开启：它是唯一能给出逐字（卡拉OK）歌词的来源。
+   */
+  localLyricEnabled: boolean;
+  /** 接口地址。默认 Folia 的 http://127.0.0.1:32109/v1/lyric */
+  localLyricEndpoint: string;
+  /**
+   * 单次请求的真超时（ms）。本机回环服务要么秒回、要么没在跑，
+   * 不值得为它等 —— 超时就当没有，继续走网络级联。
+   */
+  localLyricTimeoutMs: number;
+  /**
+   * 是否显示逐字（卡拉OK）高亮。
+   * 关掉则只按行高亮；数据侧照样取，只是不保留逐字时间轴。
+   */
+  wordByWordEnabled: boolean;
+
   // 通知
   /** 是否读取系统通知（读取的是用户全部系统通知，默认开启） */
   notificationsEnabled: boolean;
@@ -134,6 +153,12 @@ export const DEFAULT_SETTINGS: Settings = {
     "kugou",
     "PotPlayerMini64.exe",
   ],
+
+  // 本地歌词接口（默认指向 Folia；关掉后级联只剩网络源）
+  localLyricEnabled: true,
+  localLyricEndpoint: "http://127.0.0.1:32109/v1/lyric",
+  localLyricTimeoutMs: 1200,
+  wordByWordEnabled: true,
 
   // 通知（用户口径：默认开启读取、默认不过滤）
   notificationsEnabled: true,

@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSettings } from "../../stores/settings";
 import { fetchMusic } from "../../services/music";
+import { probeLocalLyric } from "../../services/playbackSources/folia";
+import {
+  describeOutcome,
+  getLocalLyricStatus,
+  type LocalLyricStatus,
+} from "../../services/playbackSources/status";
 
 /**
  * 歌曲设置 - 白名单
@@ -16,6 +22,46 @@ export default function WhitelistSettings() {
   const [input, setInput] = useState("");
   const [hint, setHint] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
   const [detecting, setDetecting] = useState(false);
+
+  // —— 本地歌词接口 ——
+  // 该链路「失败一律静默」（设计如此），所以这里把最近一次尝试的结论显示出来，
+  // 否则「没拿到逐字歌词」完全没法排查。
+  const [localStatus, setLocalStatus] = useState<LocalLyricStatus | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeHint, setProbeHint] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
+  // 超时用草稿态：直接在 onChange 里 clamp 会让"输入 5 → 300"没法打字
+  const [timeoutDraft, setTimeoutDraft] = useState(String(settings.localLyricTimeoutMs));
+  useEffect(() => {
+    setLocalStatus(getLocalLyricStatus());
+    const t = window.setInterval(() => setLocalStatus(getLocalLyricStatus()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  useEffect(() => {
+    setTimeoutDraft(String(settings.localLyricTimeoutMs));
+  }, [settings.localLyricTimeoutMs]);
+
+  const handleProbe = async () => {
+    if (probing) return;
+    setProbing(true);
+    setProbeHint(null);
+    try {
+      const r = await probeLocalLyric();
+      setProbeHint({ text: r.detail, tone: r.ok ? "ok" : "warn" });
+    } catch {
+      setProbeHint({ text: "检测失败", tone: "warn" });
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const commitTimeout = () => {
+    const v = Number(timeoutDraft);
+    const clamped = Number.isFinite(v)
+      ? Math.min(5000, Math.max(300, Math.round(v)))
+      : settings.localLyricTimeoutMs;
+    updateSettings({ localLyricTimeoutMs: clamped });
+    setTimeoutDraft(String(clamped));
+  };
 
   const exists = (name: string) =>
     list.some((entry) => entry.toLowerCase() === name.toLowerCase());
@@ -189,6 +235,106 @@ export default function WhitelistSettings() {
         >
           {detecting ? "读取中…" : "获取播放进程"}
         </button>
+      </div>
+
+      {/* ④ 本地歌词接口（默认 Folia 32109） */}
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium">本地歌词接口</span>
+          <div
+            className={`switch shrink-0${settings.localLyricEnabled ? " active" : ""}`}
+            onClick={() => updateSettings({ localLyricEnabled: !settings.localLyricEnabled })}
+          />
+        </div>
+        <div className="text-[11px] opacity-55 leading-relaxed">
+          从本机第三方程序取歌词（默认 Folia 的 32109 接口）。它是唯一能给出逐字歌词的来源；
+          没开、或它放的不是同一首歌时会静默回落到网络源，不影响现有歌词。
+        </div>
+
+        <div className="space-y-1">
+          <div className="text-[11px] opacity-80">接口地址</div>
+          <input
+            type="text"
+            value={settings.localLyricEndpoint}
+            onChange={(e) => updateSettings({ localLyricEndpoint: e.target.value })}
+            placeholder="http://127.0.0.1:32109/v1/lyric"
+            className="w-full text-[12px] px-3 py-1.5 rounded-md outline-none"
+            style={{
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] opacity-80">请求超时（ms）</span>
+          <input
+            type="number"
+            min={300}
+            max={5000}
+            step={100}
+            value={timeoutDraft}
+            onChange={(e) => setTimeoutDraft(e.target.value)}
+            onBlur={commitTimeout}
+            className="text-[12px] px-2 py-1 rounded-md outline-none"
+            style={{
+              width: 88,
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] opacity-80">逐字高亮</div>
+            <div className="text-[10px] opacity-45 leading-relaxed mt-0.5">
+              关掉则只按行高亮（数据仍会取，只是不用逐字时间轴）
+            </div>
+          </div>
+          <div
+            className={`switch shrink-0${settings.wordByWordEnabled ? " active" : ""}`}
+            onClick={() => updateSettings({ wordByWordEnabled: !settings.wordByWordEnabled })}
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void handleProbe()}
+          disabled={probing}
+          style={{ ...btnStyle, opacity: probing ? 0.55 : 1 }}
+        >
+          {probing ? "检测中…" : "检测接口"}
+        </button>
+        {probeHint && (
+          <div
+            className="text-[11px] leading-relaxed"
+            style={{
+              color: probeHint.tone === "ok" ? "var(--state-info)" : "var(--island-text-muted)",
+            }}
+          >
+            {probeHint.text}
+          </div>
+        )}
+
+        {/* 最近一次取数结论 —— 这条链路失败是静默的，这里是唯一的排查窗口 */}
+        <div
+          className="text-[11px] leading-relaxed pt-2 space-y-0.5"
+          style={{ borderTop: "1px solid var(--island-border)" }}
+        >
+          {localStatus ? (
+            <>
+              <div className="opacity-80">最近一次：{describeOutcome(localStatus.outcome)}</div>
+              <div className="opacity-55">岛上在放：{localStatus.want}</div>
+              <div className="opacity-55">接口在放：{localStatus.got ?? "（读不到）"}</div>
+              {localStatus.detail && <div className="opacity-45">说明：{localStatus.detail}</div>}
+            </>
+          ) : (
+            <div className="opacity-45">还没有取过数（换一首歌，或点上面的「检测接口」）</div>
+          )}
+        </div>
       </div>
     </div>
   );

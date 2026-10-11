@@ -64,6 +64,22 @@ function normalizeBlacklist(value: unknown): string[] {
     .filter((v) => v.length > 0);
 }
 
+/**
+ * 本地歌词接口地址规范化：必须是 http(s) 绝对地址，否则回退默认。
+ * 别让一个手改坏的地址静默毁掉整条链路 —— 地址无效时宁可用默认值。
+ */
+function normalizeEndpoint(value: unknown, def: string): string {
+  if (typeof value !== "string") return def;
+  const s = value.trim();
+  if (!s) return def;
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:" ? s : def;
+  } catch {
+    return def;
+  }
+}
+
 /** 默认值的深拷贝（避免 resetSettings 后共享引用被后续就地修改） */
 function cloneDefaults(): Settings {
   return {
@@ -117,6 +133,11 @@ function normalizeSettings(raw: unknown): Settings {
     weatherCity: str(r.weatherCity, d.weatherCity),
     // 音乐（数组缺失→默认；空数组→保留，表示"不过滤"）
     musicWhitelist: normalizeWhitelist(r.musicWhitelist),
+    // 本地歌词接口
+    localLyricEnabled: bool(r.localLyricEnabled, d.localLyricEnabled),
+    localLyricEndpoint: normalizeEndpoint(r.localLyricEndpoint, d.localLyricEndpoint),
+    localLyricTimeoutMs: num(r.localLyricTimeoutMs, d.localLyricTimeoutMs, 300, 5000),
+    wordByWordEnabled: bool(r.wordByWordEnabled, d.wordByWordEnabled),
     // 通知（数组缺失→空数组＝不过滤；默认开启读取）
     notificationsEnabled: bool(r.notificationsEnabled, d.notificationsEnabled),
     notificationBlacklist: normalizeBlacklist(r.notificationBlacklist),
