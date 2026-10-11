@@ -135,3 +135,34 @@ export function describeStageOutcome(outcome: StageOutcome): string {
       return "接口正常，但没有在放的东西";
   }
 }
+
+// ————————————————————————————————————————————————————————————————
+// 播放控制 —— 第二个通道（Stage API）上线后，「这一下点的是哪条路」必须有据可查：
+// 用户按了暂停却像没反应时，唯一能分清是「Stage 拒了」还是「SMTC 没生效」的地方。
+// ————————————————————————————————————————————————————————————————
+
+export interface ControlStatus {
+  at: number;
+  /** 用户点的动作（语义层：toggle / next / prev / seek） */
+  action: string;
+  /** 最终实际发出去的那条路 */
+  viaStage: boolean;
+  ok: boolean;
+  detail?: string;
+}
+
+let lastControl: ControlStatus | null = null;
+
+export function recordControlStatus(entry: Omit<ControlStatus, "at">): void {
+  lastControl = { ...entry, at: Date.now() };
+}
+
+export function getControlStatus(): ControlStatus | null {
+  return lastControl;
+}
+
+export function describeControlStatus(s: ControlStatus): string {
+  const via = s.viaStage ? "Stage API" : "系统媒体接口";
+  if (s.ok) return `上一次控制：${s.action} → ${via}（成功）`;
+  return `上一次控制：${s.action} → ${via}（失败${s.detail ? `：${s.detail}` : ""}）`;
+}

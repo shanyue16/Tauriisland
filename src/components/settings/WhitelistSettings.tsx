@@ -3,10 +3,13 @@ import { useSettings } from "../../stores/settings";
 import { fetchMusic } from "../../services/music";
 import { probeLocalLyric } from "../../services/playbackSources/folia";
 import {
+  describeControlStatus,
   describeOutcome,
   describeStageOutcome,
+  getControlStatus,
   getLocalLyricStatus,
   getStageStatus,
+  type ControlStatus,
   type LocalLyricStatus,
   type StageStatus,
 } from "../../services/playbackSources/status";
@@ -54,9 +57,14 @@ export default function WhitelistSettings() {
   // 它是唯一能给出「播放进度」的本地源，但采纳与否取决于曲目能否对上，
   // 所以这里把「取到的是哪首 / 有没有采纳」也显示出来 —— 否则进度不对时无从判断。
   const [stageStatus, setStageStatus] = useState<StageStatus | null>(null);
+  const [controlStatus, setControlStatus] = useState<ControlStatus | null>(null);
   useEffect(() => {
-    setStageStatus(getStageStatus());
-    const t = window.setInterval(() => setStageStatus(getStageStatus()), 1000);
+    const sync = () => {
+      setStageStatus(getStageStatus());
+      setControlStatus(getControlStatus());
+    };
+    sync();
+    const t = window.setInterval(sync, 1000);
     return () => window.clearInterval(t);
   }, []);
   useEffect(() => {
@@ -465,6 +473,10 @@ export default function WhitelistSettings() {
                 </div>
               )}
               {stageStatus.detail && <div className="opacity-45">说明：{stageStatus.detail}</div>}
+              {/* 控制走的是哪条路 —— 按了没反应时唯一能分清原因的地方 */}
+              {controlStatus && (
+                <div className="opacity-45">{describeControlStatus(controlStatus)}</div>
+              )}
             </>
           ) : (
             <div className="opacity-45">还没有取过数（开启并填好 token，播一首歌看看）</div>

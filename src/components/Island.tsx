@@ -19,7 +19,7 @@ import { useCoverAccent } from "../hooks/useCoverAccent";
 import { MOTION, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
-import { controlMusic } from "../services/music";
+import { controlPlayback } from "../services/playbackControl";
 import { getCurrentLyric } from "../services/lyrics";
 import { getWeatherIcon } from "./Icons";
 import type { WeatherData } from "../types/weather";
@@ -1356,15 +1356,16 @@ function MusicDetailView({
   // 让 0:00 也能看出这是一条进度轨道（原实现只给色条、游标会停在 0 处）。
   const progressPct = Math.min(Math.max(progress, hasRealDuration ? 0 : 2), 100);
 
-  // SMTC 控制
+  // 播放控制：默认走系统媒体接口（SMTC）；Stage API 核对通过时改走它。
+  // 路由与回退规则见 services/playbackControl.ts —— 这里只报语义动作，不关心走哪条路。
   const handlePlayPause = async () => {
-    await controlMusic("toggle");
+    await controlPlayback("toggle");
   };
   const handlePrev = async () => {
-    await controlMusic("prev");
+    await controlPlayback("prev");
   };
   const handleNext = async () => {
-    await controlMusic("next");
+    await controlPlayback("next");
   };
 
   return (

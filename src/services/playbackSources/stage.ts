@@ -44,6 +44,31 @@ import { recordStageStatus } from "./status";
 
 const LOG = "[Stage]";
 
+/**
+ * 「Stage 现在是不是当前这首歌的播放器」—— 由最近一次取数的核对结果驱动。
+ *
+ * 控制通道的安全性完全依赖这个判断：只有确认过「Stage 报的曲目就是我们正在放的这首」，
+ * 才敢把用户的点击发到它那里。超过 `maxAgeMs` 没有新的核对通过就视为失效
+ * （useMusic 每 500ms 取一次，2.5s 足够容忍几次丢包，又不会拿几分钟前的结论去点）。
+ */
+let matchedAt = 0;
+let lastPlayerState: string | null = null;
+
+function trackMatch(matched: boolean, playerState: string | null = null): void {
+  matchedAt = matched ? Date.now() : 0;
+  lastPlayerState = matched ? playerState : null;
+}
+
+/** 现在该不该把控制发给 Stage（而不是 SMTC） */
+export function isStageControlActive(maxAgeMs = 2500): boolean {
+  return matchedAt > 0 && Date.now() - matchedAt <= maxAgeMs;
+}
+
+/** Stage 报的播放状态（`PLAYING` / `PAUSED`）；没启用或没核对过时为 null */
+export function stagePlayerState(): string | null {
+  return isStageControlActive() ? lastPlayerState : null;
+}
+
 export interface StageSnapshot {
   title: string | null;
   artist: string | null;
@@ -191,6 +216,7 @@ export async function fetchStageSnapshot(want: {
   const cfg = readConfig();
   if (!cfg.enabled || !cfg.token) {
     // 不记 status：没开就不该在面板上留下噪音（面板自己会显示「已关闭」）
+    trackMatch(false);
     return null;
   }
 
@@ -198,14 +224,17 @@ export async function fetchStageSnapshot(want: {
   const res = await requestStatus(cfg);
 
   if (res.kind === "unauthorized") {
+    trackMatch(false);
     recordStageStatus({ ...base, outcome: "unauthenticated", got: null });
     return null;
   }
   if (res.kind === "error") {
+    trackMatch(false);
     recordStageStatus({ ...base, outcome: "unreachable", got: null, detail: res.detail });
     return null;
   }
   if (res.snap === null) {
+    trackMatch(false);
     recordStageStatus({ ...base, outcome: "idle", got: null });
     return null;
   }
@@ -213,6 +242,7 @@ export async function fetchStageSnapshot(want: {
   const snap = res.snap;
   const got = snap.artist ? `${snap.title} / ${snap.artist}` : (snap.title ?? "未知");
   const matched = stageMatchesTrack(snap, want);
+  trackMatch(matched, snap.playerState);
   recordStageStatus({
     ...base,
     outcome: matched ? "ok" : "mismatch",
@@ -229,4 +259,89 @@ export async function fetchStageSnapshot(want: {
     console.info(`${LOG} 曲目对不上，未采纳进度（接口在放：${got}）`);
   }
   return { snap, matched };
+}
+
+// ————————————————————————————————————————————————————————————————
+// 控制（第二个通道）
+// ————————————————————————————————————————————————————————————————
+
+/**
+ * 官方 `StagePlayerControlRequest.action` 的允许枚举。
+ * **注意没有 `play`** —— 起播要发 `resume`（`controlCapabilities.play` 是另一回事）。
+ */
+export type StageControlAction = "next" | "prev" | "pause" | "resume" | "seek";
+
+/**
+ * 控制结果。**必须区分「明确被拒」和「结果未知」**：
+ * - `rejected: true`（4xx：动作不支持 / 参数非法）→ 指令**确定没有生效**，调用方可以安全回退到 SMTC
+ * - `rejected: false`（5xx / 超时 / 网络错）→ **不知道有没有生效**，回退会冒「双动作」的险
+ *   （例如 pause 其实成功了但响应丢了，再发一次 SMTC toggle 反而把它恢复播放），所以不回退
+ */
+export type StageControlResult =
+  | { ok: true }
+  | { ok: false; rejected: boolean; detail: string };
+
+/**
+ * 向 Stage API 发一条控制指令。
+ *
+ * 只在 `isStageControlActive()` 为真时才会被调用（由 `services/playbackControl.ts` 负责），
+ * 因为只有核对过「Stage 报的曲目就是我们正在放的这首」才敢把用户的点击发过去。
+ * **永不抛异常。**
+ */
+export async function sendStageControl(
+  action: StageControlAction,
+  positionMs?: number
+): Promise<StageControlResult> {
+  const cfg = readConfig();
+  if (!cfg.enabled || !cfg.token) return { ok: false, rejected: true, detail: "未启用" };
+
+  const url = `${cfg.endpoint.replace(/\/+$/, "")}/stage/player/control`;
+  const body: Record<string, unknown> = { action };
+  if (action === "seek") {
+    // 官方要求：非负整数，服务端向下取整
+    body.positionMs = Math.max(0, Math.floor(positionMs ?? 0));
+  }
+
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), cfg.timeoutMs);
+  try {
+    const resp = await tauriFetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+
+    if (!resp.ok) {
+      // 4xx = 明确拒绝（没生效）；5xx = 结果未知
+      const rejected = resp.status >= 400 && resp.status < 500;
+      let detail = `HTTP ${resp.status}`;
+      try {
+        const err = (await resp.json()) as { error?: unknown; code?: unknown };
+        const code = typeof err?.code === "string" ? err.code : "";
+        const msg = typeof err?.error === "string" ? err.error : "";
+        if (code || msg) detail = `${resp.status} ${code || msg}`;
+      } catch {
+        /* 错误体不是 JSON 也无所谓 */
+      }
+      console.info(`${LOG} 控制 ${action} 被拒：${detail}`);
+      return { ok: false, rejected, detail };
+    }
+
+    const json = (await resp.json()) as { accepted?: unknown } | null;
+    if (json && json.accepted === true) return { ok: true };
+    // 200 但没 accepted:true —— 视为未生效，但**不**当作明确拒绝（写清楚了才知道发生了什么）
+    return { ok: false, rejected: false, detail: "响应里没有 accepted" };
+  } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    const detail =
+      name === "AbortError" ? `超时 ${cfg.timeoutMs}ms` : e instanceof Error ? e.message : String(e);
+    console.info(`${LOG} 控制 ${action} 失败：${detail}`);
+    return { ok: false, rejected: false, detail };
+  } finally {
+    window.clearTimeout(timer);
+  }
 }

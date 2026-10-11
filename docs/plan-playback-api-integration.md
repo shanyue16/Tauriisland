@@ -304,14 +304,59 @@ UI 观感类改动需用户真机确认后再 push（项目既有规则）。
 - 设置页「歌曲」段新增第 ⑤ 块：开关 + token（password 输入）+ 地址 + 最近一次结论
   （含 Stage 在放哪首、进度、播放状态、有没有采纳）。
 
-### 11.3 明确**没有**做的（留给下一轮拍板）
+### 11.3 明确**没有**做的
 
-- **控制没有接**。`controlCapabilities` 全部为 true，`POST /stage/player/control`
-  能 play/pause/resume/seek/previous/next —— 但这与本项目既定的
-  「控制始终走 SMTC」相冲突（见 §0 分工原则）。要不要为 Folia 这类源开第二个控制通道，
-  需要用户拍板，不要擅自改。
 - **暂停时的"冻结"没有额外处理**：身份核对通过且 Stage 报 PAUSED 时，
   如果 SMTC 仍报在播，进度仍会外推。要修就得让 Stage 的 `playerState` 覆盖 SMTC 的
   `playing`，风险是"同一首歌在 Folia 里暂停、在另一个播放器里在放"这种双源场景。
+  **注意：`playing` 那一处后来确实接上了 Stage（见 §12），但"覆盖"仍然没做。**
 - **封面没有从 Stage 取**（blob URL 取不到，见 11.1-2）。
+
+---
+
+## 12. 第二个控制通道（Stage API，2026-10-11，用户拍板开启）
+
+计划 §0 原定的分工是「**控制始终走 SMTC**」。用户拍板例外：
+Stage API 的 `controlCapabilities` 全为 true，且它是**唯一能在「系统媒体接口不上报时间线」
+的播放器（酷狗）上真正控制到播放**的通道 —— 所以开第二个通道。
+
+### 12.1 官方 `POST /stage/player/control` 契约（取自 API_SCHEMA.md，**不要猜**）
+
+```ts
+interface StagePlayerControlRequest {
+  action: 'next' | 'prev' | 'pause' | 'resume' | 'seek';
+  positionMs?: number;          // action==='seek' 时必填；**必须非负整数**，服务端向下取整
+}
+// 200 → { accepted: true, action, playbackContext, ... }
+```
+
+⚠️ **动作枚举里没有 `play`** —— 起播要发 `resume`。
+（`controlCapabilities` 里的 `play: true` 是"能力"字段，不是可用的动作名。）
+
+错误码（决定回退策略的关键）：
+`400 INVALID_STAGE_PLAYER_CONTROL_JSON` / `400 ..._ACTION` / `400 ..._SEEK_POSITION` /
+`409 STAGE_PLAYER_CONTROL_UNSUPPORTED` /
+`503 ..._UNAVAILABLE` / `504 ..._REQUEST_TIMEOUT` / `502 ..._REQUEST_REJECTED`
+
+### 12.2 路由与回退（代码在 `src/services/playbackControl.ts`）
+
+- **什么时候走 Stage**：已启用 + token 有效 + **最近 2.5s 内核对通过**
+  （即确认过「Stage 报的曲目就是我们正在放的这首」）。其余情况一律走原来的 SMTC ——
+  没装 / 没开 / 放的不是同一首时，行为与从前**完全一致**。
+- **`toggle` 的映射**：UI 只有「播放/暂停」一个键，路由到 Stage 时按它报的
+  `playerState` 决定发 `pause` 还是 `resume`（因为它没有 `play`）。
+- **失败要不要回退 —— 只有「明确被拒」才回退**：
+  - 4xx（动作不支持 / 参数非法）→ 指令**确定没生效** → 安全回退 SMTC
+  - 5xx / 超时 / 网络错 → **结果未知** → **不回退**。否则会冒"双动作"的险
+    （pause 其实成功了但响应丢了，再发一次 SMTC `toggle` 反而把它恢复播放）
+- **`seek` 只有 Stage 支持**（SMTC 侧没有 seek 命令）。路由层已实现，
+  **但 UI 目前没有任何 seek 入口**（进度条不可点）—— 要不要加是 UI 决定，没有擅自做。
+- 调用方（`Island.tsx` 的三个按钮）只报**语义动作**（`toggle`/`prev`/`next`），
+  不关心走哪条路；这与已有的 `fetchLyricsMulti` 只关心"拿到歌词"是同一个思路。
+
+### 12.3 可观测性
+
+「点的是哪条路」记进 `status.ts` 的 `ControlStatus`，设置页 Stage 那一段会显示
+`上一次控制：toggle → Stage API（成功）` 之类。**这是"按了没反应"时唯一能分清原因的地方**
+（Stage 拒了？SMTC 没生效？两条都没走？），与之前给歌词链路配诊断旁路是同一个理由。
 
