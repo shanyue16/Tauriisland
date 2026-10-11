@@ -519,7 +519,7 @@ export default function WhitelistSettings() {
       </div>
 
       {/* ⑥ Stage API（Folia 32107）—— 带控制能力的本地源 */}
-      <div className="space-y-2">
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[12px] font-medium">Stage API（播放进度）</div>
