@@ -68,83 +68,73 @@ export default function MusicPage({ data }: MusicPageProps) {
   return (
     // 内边距口径与加载态/空态一致（垂直 py-1 = 线框稿 mini 规格 4px）；
     // 左侧 18px = 用户要求悬浮态内容别贴着窗口边缘（原 14px）；
-    // 右侧留 26px：悬浮态竖排页码指示器在 right:8，进度时间（右对齐）不能贴上去。
+    // 右侧留 26px：悬浮态竖排页码指示器在 right:8，右对齐的控件不能贴上去。
+    //
+    // 版式（用户指定）：[封面] [歌名 / 歌手] …… [控件靠右] 上排，[进度条][时间] 下排。
+    // 控件放在**歌名歌手两行块的右侧**而不是自己占一行 —— 用户要求，也顺带把
+    // 高度还给进度条：命中区(14px)与控件不在同一行，永远不会互相抢点击。
     <div
-      className="w-full h-full flex items-center gap-2 py-1 px-[18px] pr-[26px]"
+      className="w-full h-full flex flex-col justify-center gap-[4px] py-1 px-[18px] pr-[26px]"
       style={{ color }}
     >
-      {/* 封面缩略图 */}
-      {data.cover_url ? (
-        <img
-          src={data.cover_url}
-          alt=""
-          className="w-7 h-7 rounded-md object-cover flex-shrink-0"
-          draggable={false}
-          style={{ boxShadow: coverGlow }}
-        />
-      ) : (
-        <div
-          className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-          style={{ background: "var(--surface-1)", boxShadow: coverGlow }}
-        >
-          <MusicIcon size={14} style={{ color, opacity: 0.5 }} />
-        </div>
-      )}
+      {/* 上排：封面 + 歌名/歌手 + 控件（靠右） */}
+      <div className="flex items-center gap-2 min-w-0">
+        {data.cover_url ? (
+          <img
+            src={data.cover_url}
+            alt=""
+            className="w-7 h-7 rounded-md object-cover flex-shrink-0"
+            draggable={false}
+            style={{ boxShadow: coverGlow }}
+          />
+        ) : (
+          <div
+            className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
+            style={{ background: "var(--surface-1)", boxShadow: coverGlow }}
+          >
+            <MusicIcon size={14} style={{ color, opacity: 0.5 }} />
+          </div>
+        )}
 
-      {/* 信息区（四行）：歌名+时间 / 歌手 / 控件 / 进度条
-          悬浮态仍不放歌词（歌词只在展开态与失焦态出现，用户已确认）。
-
-          行的顺序是**控件在进度条之上**，这不是审美选择：进度条的命中区必须比
-          条本体（3px）高得多才拖得准，而命中区一旦向下伸就会抢走控件的点击。
-          把条放在最下面，命中区就能只向上、向下都占自己那一整行（14px），
-          与控件行是兄弟节点 —— 天然不重叠，也不需要负外边距（父级是 items-center，
-          负外边距会把整列推歪 3px）。 */}
-      <div className="flex-1 min-w-0 flex flex-col gap-[2px]">
-        {/* 第一行: 歌名 + 时间 */}
-        <div className="flex items-baseline gap-2 min-w-0">
-          <div className="text-[12px] font-medium leading-tight truncate flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex flex-col gap-[1px] text-left">
+          <div className="text-[12px] font-medium leading-tight truncate">
             {data.title || "未知曲目"}
           </div>
           <div
-            className="text-[9px] opacity-50 tabular-nums leading-none flex-shrink-0"
-            style={{ color: muted }}
+            className="text-[9.5px] leading-tight truncate"
+            style={{ color: muted, opacity: 0.9 }}
           >
-            {timeStr}/{totalStr}
+            {data.artist || "未知艺术家"}
           </div>
         </div>
 
-        {/* 第二行: 歌手 */}
-        <div
-          className="text-[9.5px] leading-tight truncate max-w-full"
-          style={{ color: muted, opacity: 0.9 }}
-        >
-          {data.artist || "未知艺术家"}
-        </div>
-
-        {/* 第三行: 播放控件 —— 与展开态同一套「语义动作」，由 playbackControl 决定
-            走 SMTC 还是 Stage。鼠标一移开悬浮态就收起，所以这里不该有隐藏项。 */}
-        <div className="flex items-center gap-[6px]">
+        {/* 控件靠右。点击 stopPropagation：悬浮态整块可点（点了进展开态），
+            不拦冒泡会让一次点击做两件事。只报语义动作，走 playbackControl 的路由。 */}
+        <div className="flex items-center gap-[3px] shrink-0" style={{ marginLeft: "auto" }}>
           <CtrlButton tip="上一首" onClick={() => controlPlayback("prev")}>
-            <PrevIcon size={13} />
+            <PrevIcon size={12} />
           </CtrlButton>
           <CtrlButton
             tip={data.playing ? "暂停" : "播放"}
-            width={24}
+            width={22}
             onClick={() => controlPlayback("toggle")}
           >
-            {data.playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+            {data.playing ? <PauseIcon size={13} /> : <PlayIcon size={13} />}
           </CtrlButton>
           <CtrlButton tip="下一首" onClick={() => controlPlayback("next")}>
-            <NextIcon size={13} />
+            <NextIcon size={12} />
           </CtrlButton>
         </div>
+      </div>
 
-        {/* 第四行: 进度条（可点可拖）。命中区 = 这一整行 14px（条本体 3px 居中），
-            轨道带一圈封面主色光晕（track 自身的 boxShadow 不受自己 overflow:hidden
-            影响，看得见）；已播段用同色渐变，这样"封面光晕 = 进度条颜色"是同源。 */}
+      {/* 下排：[进度条][时间]（用户指定同行，条在前、时间在后）。
+          命中区 = 这一整行 14px（条本体 3px 居中）；轨道带一圈封面主色光晕
+          （track 自身的 boxShadow 不受自己 overflow:hidden 影响，看得见），
+          已播段用同色渐变，这样"封面光晕 = 进度条颜色"是同源。 */}
+      <div className="flex items-center gap-2 min-w-0">
         <div
           ref={scrub.barRef}
-          className={`h-[14px] flex items-center${seekable ? " cursor-pointer" : ""}`}
+          className={`flex-1 min-w-0 h-[14px] flex items-center${seekable ? " cursor-pointer" : ""}`}
           data-tip={seekable ? "点击或拖动可跳转" : undefined}
           style={{ touchAction: "none" }}
           {...scrub.handlers}
@@ -167,12 +157,18 @@ export default function MusicPage({ data }: MusicPageProps) {
             />
           </div>
         </div>
+        <span
+          className="text-[9px] tabular-nums shrink-0 leading-none"
+          style={{ color: muted }}
+        >
+          {timeStr}/{totalStr}
+        </span>
       </div>
     </div>
   );
 }
 
-/** 悬浮态的紧凑控制键：18×18（播放键宽 24），hover 用 `--sidebar-tab-hover` 面 */
+/** 悬浮态的紧凑控制键：18×18（播放键宽 22），hover 用 `--sidebar-tab-hover` 面 */
 function CtrlButton({
   tip,
   onClick,
@@ -189,7 +185,6 @@ function CtrlButton({
       type="button"
       data-tip={tip}
       aria-label={tip}
-      // 悬浮态整块是可点的（点了进展开态），控件必须拦住冒泡，否则一次点击做两件事
       onClick={(e) => {
         e.stopPropagation();
         void onClick();

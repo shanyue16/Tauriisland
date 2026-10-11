@@ -45,7 +45,7 @@ import { canScrollableAncestorScroll } from "../utils/scroll";
 
 // 固定尺寸
 const MINIMAL_H = 56;
-const MEDIUM_H = 80;
+const MEDIUM_H = 74;
 const EXPANDED_W = 530; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
 const EXPANDED_H = 280; // 原 220：日历页上下不再拥挤
 /**
@@ -194,11 +194,13 @@ export default function Island() {
       if (s === "expanded" || s === "maximal") return;
       // 先把动画基准校准成"当前基础态尺寸"，避免从陈旧尺寸插值造成跳变。
       // 提醒可以在任意态弹出，所以基准要按当前态算。
+      // 有音乐时悬浮态宽度**跟失焦态音乐窗口同宽**（用户要求）：两态尺寸一致，
+      // 悬浮↔失焦不会横向抖一下。没音乐时仍用用户设的 mediumWidth。
       const base =
         s === "minimal"
           ? { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H }
           : s === "medium"
-            ? { w: settings.mediumWidth, h: MEDIUM_H }
+            ? { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.mediumWidth, h: MEDIUM_H }
             : { w: MAXIMAL_W, h: MAXIMAL_H };
       currentSizeRef.current = base;
       // 上一条提醒若还在退场（140ms 窗口内又来了一条），立刻取消退场并复用该层，
@@ -241,7 +243,8 @@ export default function Island() {
       return { w: EXPANDED_W + SHADOW_PAD * 2, h: h + SHADOW_PAD * 2 };
     }
     if (state === "minimal") return { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.minimalWidth, h: MINIMAL_H };
-    if (state === "medium") return { w: settings.mediumWidth, h: MEDIUM_H };
+    // 有音乐时悬浮态与失焦态**同宽**（用户要求：两态别横向抖）；无音乐才用用户的 mediumWidth
+    if (state === "medium") return { w: hasMusic ? MINIMAL_W_WITH_MUSIC : settings.mediumWidth, h: MEDIUM_H };
     // 展开态与最大态（设置页）尺寸完全相同 —— 同一个岛体 + 同一圈留白
     if (state === "expanded" || state === "maximal") {
       return { w: EXPANDED_W + SHADOW_PAD * 2, h: EXPANDED_H + SHADOW_PAD * 2 };
