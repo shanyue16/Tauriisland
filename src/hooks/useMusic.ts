@@ -3,12 +3,18 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { fetchMusic } from "../services/music";
 import { useSettings } from "../stores/settings";
 import { fetchLyricsMulti, type LyricsResult } from "../services/lyrics";
+import { fetchLyricsFromFolia } from "../services/playbackSources/folia";
 import { kugouLookup, type KugouTrack } from "../services/kugou";
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
 
 const POLL_INTERVAL = 500; // ms — 只负责刷新 SMTC 基准值
 const TICK_INTERVAL = 66;  // ms — ~15Hz 平滑外推 (eIsland 同样 66ms)
+/**
+ * 本地源（Folia）补取延迟。`loadTrackMeta` 只在换歌时跑一次，而 Folia 完全可能是
+ * 这首歌播到一半才被打开的 —— 隔 5s 补一次是覆盖这种情况的最低成本手段。
+ */
+const LOCAL_LYRIC_RETRY_MS = 5000;
 
 const lyricsCache = new Map<string, LyricsResult>();
 const itunesCoverCache = new Map<string, string>();
@@ -82,6 +88,9 @@ export function useMusic() {
 
   // iTunes 封面兜底定时器
   const itunesTimerRef = useRef<number | null>(null);
+
+  // 本地源（Folia）补取定时器
+  const localRetryTimerRef = useRef<number | null>(null);
 
   /** 启动 / 停止 66ms tick */
   const ensureTick = useCallback(() => {
@@ -331,12 +340,54 @@ export function useMusic() {
   }, [ensureTick, stopTick]);
 
   /**
+   * 本地源（Folia）补取 —— 登记一次 5s 后的重试。
+   *
+   * 为什么需要它：`loadTrackMeta` 只在**换歌**时跑一次，而 Folia 完全可能是在
+   * 这首歌播到一半时才被打开的（或者它那会儿还没把歌词加载出来）。没有这一步，
+   * 用户得等到下一首歌才能看到逐字歌词。
+   *
+   * 只补一次、不轮询：这首都拿不到，说明 Folia 里就没有它，再问是白问。
+   */
+  function scheduleLocalRetry(
+    title: string,
+    artist: string,
+    key: string,
+    durationMs?: number
+  ) {
+    if (localRetryTimerRef.current !== null) clearTimeout(localRetryTimerRef.current);
+    localRetryTimerRef.current = window.setTimeout(async () => {
+      localRetryTimerRef.current = null;
+      if (prevTrackKeyRef.current !== key) return; // 已经换歌，作废
+      const hit = await fetchLyricsFromFolia({ title, artist, durationMs });
+      if (!hit || hit.lines.length === 0) return;
+      if (prevTrackKeyRef.current !== key) return; // 补取期间又换歌了
+      // 时长要沿用之前那个源给的：本地源不提供时长，别把它抹成 null
+      // （酷狗这类不上报时间线的播放器全靠它撑进度条）
+      const prev = lyricsCache.get(key);
+      lyricsCache.set(key, {
+        lines: hit.lines,
+        duration: prev?.duration ?? null,
+        provider: "folia",
+      });
+      lyricsRef.current = hit.lines;
+      setLyrics(hit.lines);
+      console.info(`[useMusic] 本地源补取成功: "${title} / ${artist}"（${hit.lines.length} 行）`);
+    }, LOCAL_LYRIC_RETRY_MS);
+  }
+
+  /**
    * 异步加载曲目元数据：歌词 + 精确时长 + 封面。
    *
+   * ⓪ 本地源（Folia 本机歌词接口）：`fetchLyricsMulti` 内部最优先，命中就不发网络请求；
    * ① 酷狗曲库查询：给精确时长与专辑封面（中文曲库命中率高，且给的是播放器自己那首）；
    * ② 歌词：eIsland 式多源级联 —— 来源播放器自己的源优先，其余源依次回退，LRCLIB 收尾兜底。
    */
   async function loadTrackMeta(title: string, artist: string, appName: string | null) {
+    // 换歌即作废上一次的本地源补取计划
+    if (localRetryTimerRef.current !== null) {
+      clearTimeout(localRetryTimerRef.current);
+      localRetryTimerRef.current = null;
+    }
     const key = makeTrackKey(title, artist);
     const cached = lyricsCache.get(key);
     if (cached) {
@@ -350,6 +401,8 @@ export function useMusic() {
       // 否则"切走再切回同一首"会丢失封面。
       const cachedCover = kugouCoverCache.get(key);
       if (cachedCover) kugouCoverRef.current = cachedCover;
+      // 缓存里存的若不是本地源的结果，照样安排一次补取（Folia 可能是后开的）
+      if (cached.provider !== "folia") scheduleLocalRetry(title, artist, key);
       return;
     }
 
@@ -369,13 +422,16 @@ export function useMusic() {
       }
     } catch { /* 曲库查不到不影响下面的歌词级联 */ }
 
-    // 2) 歌词：多源级联（网易云 / QQ / 酷狗 + LRCLIB 兜底）
+    // 2) 歌词：本地源优先（在 fetchLyricsMulti 内部）+ 多源级联（网易云 / QQ / 酷狗 / LRCLIB）
+    const kugouDurationMs =
+      kugouTrack && kugouTrack.duration > 0 ? Math.round(kugouTrack.duration * 1000) : undefined;
     try {
       const result: LyricsResult | null = await fetchLyricsMulti({
         title,
         artist,
         appName,
         kugouTrack,
+        durationMs: kugouDurationMs,
       });
       if (result && result.lines.length > 0) {
         lyricsCache.set(key, result);
@@ -389,9 +445,12 @@ export function useMusic() {
         lyricsRef.current = [];
         setLyrics([]);
       }
+      // 这一轮不是本地源给的歌词 → 隔 5s 补取一次（Folia 可能刚打开、或刚切到这首歌）
+      if (result?.provider !== "folia") scheduleLocalRetry(title, artist, key, kugouDurationMs);
     } catch {
       lyricsRef.current = [];
       setLyrics([]);
+      scheduleLocalRetry(title, artist, key, kugouDurationMs);
     }
   }
 
@@ -403,6 +462,7 @@ export function useMusic() {
       clearInterval(interval);
       stopTick();
       if (itunesTimerRef.current !== null) clearTimeout(itunesTimerRef.current);
+      if (localRetryTimerRef.current !== null) clearTimeout(localRetryTimerRef.current);
     };
   }, [poll, stopTick]);
 

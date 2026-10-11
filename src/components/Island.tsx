@@ -1614,6 +1614,11 @@ function LyricsBlock({
       {nearby.map((line, i) => {
         const dist = Math.abs(startIdx + i - cur);
         const isCurrent = dist === 0;
+        // 逐字（卡拉OK）只做**当前行**，且只在这一行真的带逐字时间轴时。
+        // words 只由本地源（Folia 原生逐字）给出 —— provider 已经在「不做逐字」时
+        // 把它丢掉了，所以这里不需要再问一次「要不要逐字」。
+        // 不给 5 行都建 span：66ms 一跳的重渲染下，一行就够表达"唱到哪个字"。
+        const words = isCurrent && line.words && line.words.length > 0 ? line.words : null;
         return (
           <div
             key={`${startIdx + i}-${line.time_ms}`}
@@ -1627,7 +1632,24 @@ function LyricsBlock({
               lineHeight: 1.3,
             }}
           >
-            {line.text}
+            {words
+              ? words.map((w, wi) => (
+                  // 逐字不做过渡：66ms 一跳 + 200ms 过渡会糊成拖影
+                  <span
+                    key={wi}
+                    style={{
+                      color:
+                        positionMs >= w.end_ms
+                          ? "var(--island-text)"
+                          : positionMs >= w.start_ms
+                            ? "var(--island-accent)"
+                            : "var(--island-text-muted)",
+                    }}
+                  >
+                    {w.text}
+                  </span>
+                ))
+              : line.text}
           </div>
         );
       })}
