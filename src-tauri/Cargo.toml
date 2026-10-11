@@ -1,6 +1,6 @@
 [package]
 name = "tauriisland"
-version = "0.1.0"
+version = "26.10.11-1"
 description = "A Dynamic Island for Windows"
 authors = ["you"]
 edition = "2021"
@@ -47,3 +47,21 @@ windows = { version = "0.58", features = [
   "Win32_UI_WindowsAndMessaging",
   "implement",
 ] }
+
+# 发布构建：剥离符号。
+#
+# ⚠️ 实测结论（2026-10-11，v26.10.11-1 打包）：**在 MSVC 工具链上这一项对 exe 体积几乎无用**。
+#    设置后 exe 仍是 17.62 MiB，且二进制里**依然存在** CodeView(RSDS) 调试目录项，
+#    内容指向旁边的 `tauriisland.pdb`（10.21 MiB）。
+#    原因：MSVC 从来不把调试信息嵌进 exe，它一直写在独立的 .pdb 里，
+#    exe 内只有一个约几十字节的指针。所以"strip 掉就能让 exe 小一大截"在 MSVC 上不成立
+#    （那是 GNU/ELF 的行为）。
+#    保留它的理由：对 ELF/其它目标有效、对 MSVC 无害；**不要**把它当成已生效的瘦身手段。
+#    真要压 exe 体积，可用的杠杆是 `lto = true` + `codegen-units = 1` + `opt-level = "s"`，
+#    代价是构建时间从 ~3.5 分钟涨到十几分钟，且 `panic = "abort"` 会改掉 panic 行为
+#    （本应用是常驻托盘程序，panic 行为变更需单独评估）。属另一件事，未做。
+#
+# 另注：`tauriisland.pdb` 与整个 `target/` 都是构建中间产物，**不进安装包**；
+# 发布只需上传 bundle/nsis 下的那一个 -setup.exe（本次 4.52 MiB）。
+[profile.release]
+strip = true
