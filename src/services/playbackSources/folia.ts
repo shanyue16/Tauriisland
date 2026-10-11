@@ -36,43 +36,14 @@ import type { LyricLine, LyricWord } from "../../types/lyrics";
 import { isSameArtist, isSameTrack, textMentionsTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
 import { recordLocalLyricStatus } from "./status";
+import { isNonLyricLine } from "./lyricNoise";
 
 const LOG = "[Folia]";
 
-/**
- * `......` 之类的前奏占位行（实测样本里出现过）
- */
-const PLACEHOLDER = /^[.．。…·\s]+$/;
-
-/**
- * 署名行：`词：许嵩` / `曲：许嵩` / `编曲：田汨` / `制作人：…`。
- * 实测 Folia 的载荷里混着这类元数据（`惊鸿一面` 那份前 5 行全是），它们不是歌词。
- *
- * 注意必须同时收 `词`/`曲` 这两种**单字**写法 —— 实测数据里就是 `词：许嵩`
- * 而不是 `作词：许嵩`。**冒号是必需的**，所以 `曲终人散…` 这类真实歌词行不会误伤。
- */
-const CREDIT =
-  /^(作词|作曲|编曲|填词|混音|母带|制作人|监制|出品|发行|录音|吉他|贝斯|鼓|键盘|和声|统筹|企划|演唱|原唱|词|曲|op|ed)\s*[：:]/i;
-
-/** 版权声明行。实测原文：`未经著作权人书面许可不得以任何方式（包括翻唱、翻录等）使用` */
-const COPYRIGHT = /(著作权|版权所有|未经许可|未经授权|翻唱|翻录|侵权|必究)/;
-
-/** 纯角色标记行（对唱标注），如 `男：` / `女：` / `合：` —— 冒号后面没有内容 */
-const ROLE_ONLY = /^(男|女|合|合唱|全体)\s*[：:]\s*$/;
-
-/**
- * 这一行是不是「根本不是歌词」的元数据/声明行。
- *
- * **为什么要单独判**：这些行既不是标题卡（解析不出身份），也不是零长度行，
- * 所以身份门禁和标题卡判定都不会动它们 —— 最终会原样当成歌词显示在岛上，
- * 用户看到的就是版权声明和 `op：xxx` 混在歌词中间。实测 `皎皎月亮船` 那份
- * 40 行里有 3 行是这样的（`op：风升乐起` / `......` / 版权声明）。
- */
-function isNonLyricLine(text: string): boolean {
-  return (
-    PLACEHOLDER.test(text) || CREDIT.test(text) || COPYRIGHT.test(text) || ROLE_ONLY.test(text)
-  );
-}
+// 「这一行根本不是歌词」的判定（署名 / 版权声明 / 片头标记 / 零长度推广行）
+// 已搬到 `./lyricNoise.ts`：Now Playing（9863）混的是同一类脏数据，
+// 两份正则列表放在两个文件里必然漂移（表现是「这个源干净了、那个源开始漏出品人」）。
+// `isNonLyricLine` 从那边 import。
 
 /**
  * 标题卡的分隔符写法**并不统一**：实测遇到过 `"曲名 - 歌手"`（两侧带空格）

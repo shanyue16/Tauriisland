@@ -25,8 +25,9 @@ import { fetchLyricsFromNetease } from "./lyricsProviders/netease";
 import { fetchLyricsFromQQMusic } from "./lyricsProviders/qqmusic";
 import type { ProviderLyrics } from "./lyricsProviders/types";
 import { fetchLyricsFromFolia } from "./playbackSources/folia";
+import { fetchLyricsFromNowPlaying } from "./playbackSources/nowplaying";
 
-export type LyricsProvider = "netease" | "qqmusic" | "kugou" | "lrclib" | "folia";
+export type LyricsProvider = "netease" | "qqmusic" | "kugou" | "lrclib" | "folia" | "nowplaying";
 
 export interface LyricsResult {
   lines: LyricLine[];
@@ -120,6 +121,20 @@ export async function fetchLyricsMulti(query: LyricsQuery): Promise<LyricsResult
   if (local && local.lines.length > 0) {
     console.info(`${LOG} 命中 folia(本地): "${title} / ${artist}"（${local.lines.length} 行）`);
     return { lines: local.lines, duration: saneDuration(local.duration), provider: "folia" };
+  }
+
+  // ⓪' 第二个本地源：Now Playing（9863）。
+  // 放在网络源之前、Folia 之后（用户 2026-10-11 拍板）：
+  // · 它自己已经并行查过网易云 + QQ 并挑了匹配度最高的那份（实测 `source:"qq"`），
+  //   质量与我们单源请求相当或更好；
+  // · 它是**唯一同时给原生逐字与翻译**的源，也是洛雪这类「SMTC 不上报时间线」平台在
+  //   Folia 关掉时的唯一逐字来源；
+  // · 排在 Folia 之后，是因为 Folia 那份是用户在 Folia 里手动调过 offset 的。
+  // 与 Folia 同样：曲目核对不通过就整份返回 null，所以这里不需要再包一层 withTimeout。
+  const np = await fetchLyricsFromNowPlaying({ title, artist, durationMs });
+  if (np && np.lines.length > 0) {
+    console.info(`${LOG} 命中 nowplaying(本地): "${title} / ${artist}"（${np.lines.length} 行）`);
+    return { lines: np.lines, duration: saneDuration(np.duration), provider: "nowplaying" };
   }
 
   const primary = detectProviderFromApp(appName);

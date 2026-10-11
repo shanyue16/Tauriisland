@@ -445,3 +445,189 @@ interface StagePlayerControlRequest {
 
 `docs/music-layout.html` 已同步（悬浮态改成 340×80 含控件行与命中区、失焦态补上两段丝线）。
 
+---
+
+## 14. P2 取证：Now Playing（9863）实测契约（2026-10-11 真机）
+
+**范围**：只做**数据源**接入（曲目/进度/歌词），**不碰控制** —— 它根本没有任何控制类路由。
+控制仍走 SMTC / Folia Stage API，与既定分工一致。
+
+### 14.1 运行前提
+
+| 项 | 实测 |
+|---|---|
+| 安装位置 | `D:\Program Files\Now Playing\`（`Now Playing.exe` 是 UI，`NowPlayingService.exe` 是服务） |
+| 版本 | **0.1.0**（2026-09-03）—— 与仓库 master 契约**逐字段一致**（已核对） |
+| 端口 | 9863（Spring Boot 2.6.13 / Java 11 / Tomcat） |
+| 鉴权 | **无**（不像 Folia Stage 要 Bearer token） |
+| 自启 | **关**（`runAtStartup:false`，注册表 Run 无条目）→ 用户不开就没有 9863，必须静默降级 |
+| 用户配置 | `Settings/settings.json`：`platform:"lx"`（洛雪）、`smtc:true`、`pollInterval:100`、`deviceId:"default"` |
+
+### 14.2 三个会用到的端点（真实响应）
+
+**`GET /api/query`** —— `{player, track}`：
+
+```jsonc
+{ "player": { "hasSong": true, "isPaused": false, "volumePercent": 0.0,
+              "seekbarCurrentPosition": 175,          // ← 秒
+              "seekbarCurrentPositionHuman": "2:55",
+              "statePercent": 0.8333333333333334,     // = position/duration，冗余
+              "likeStatus": "INDIFFERENT", "repeatType": "NONE" },
+  "track":  { "author": "李佳薇", "title": "甲乙丙丁 (你我怎么两清)", "album": "甲乙丙丁",
+              "cover": "https://p1.music.126.net/…jpg?param=500y500",
+              "duration": 210, "durationHuman": "3:30",   // ← 秒
+              "url": "https://music.youtube.com/watch?v=dQw4w9WgXcQ",  // ⚠️ 见 14.4
+              "id": "3399839173",
+              "isVideo": false, "isAdvertisement": false, "inLibrary": false } }
+```
+
+**`GET /api/query/progress`** —— `{"progress":175149}`，**毫秒**。
+**`GET /api/query/hasSong` / `isConnected`** —— `{"data":true}`。
+
+**`GET /api/lyric`** —— 13504 字节实测：
+
+```jsonc
+{ "source": "qq", "title": "甲乙丙丁 (你我怎么两清)", "author": "李佳薇", "duration": 210,
+  "hasLyric": true, "hasTranslatedLyric": false, "hasKaraokeLyric": true,
+  "lrc": "[ti:…]\n[ar:…]\n[offset:0]\n[00:00.06]甲乙丙丁…\n[00:02.20]词：…\n…",   // 标准 LRC，69 行
+  "translatedLyric": "",        // 本例为空；`hasTranslatedLyric` 为 false 时不必请求
+  "karaokeLyric": "<?xml …<QrcInfos>…" }   // QRC，见 14.3
+```
+
+### 14.3 两个必须记住的坑
+
+**① 单位不一致（同一份数据两种单位）**
+
+| 端点 | 字段 | 单位 |
+|---|---|---|
+| `/api/query` | `track.duration` / `player.seekbarCurrentPosition` | **秒**（Integer） |
+| `/api/query/progress` | `progress` | **毫秒**（Long） |
+
+实测同刻对照：`seekbarCurrentPosition=175` vs `progress=175149`（175×1000≈175149）→ 确认。
+**混用会让进度条差 1000 倍。**
+
+**② `karaokeLyric` 是 QRC（QQ 音乐格式），不是 LRC**
+
+```
+[行起ms,行时长ms]字(绝对ms,时长ms)字(绝对ms,时长ms)…
+```
+
+实测样本：`[69,1992]甲(69,175)乙(244,144)丙(388,128)…`
+**word 时间是绝对毫秒**，不是相对行首 —— 自证：`甲` 的 69 = 行起 69，`乙` 的 244 = 69+175。
+整段被 XML 包着，XML 声明之后才是 LRC 段头（`[ti:]`/`[ar:]`/`[offset:0]`）与计时行。
+⇒ 解析要**剥掉 XML 外壳 → 取 LRC 段头之后的计时行 → 逐行解析方括号与圆括号**。
+（QRC 的方括号与圆括号**语义恰好与标准 LRC 相反**：方括号是行、圆括号才是字。）
+
+`lrc`（备选）是标准 LRC，69 行，**同样混着署名行**（`词：`/`曲：`/`编曲：`，
+以及片尾的 `歌曲企划：`/`营销团队：`/`监制：`/`特别鸣谢：`/`出品：`）——
+与网易云源同一类噪声，**复用现成的过滤判据**（`^词\s*[：:]` 这种带必需分隔符的规则，
+不能误伤 `曲终人散…` 这类真内容）。
+
+### 14.4 两条硬限制（官方 README 明写，直接影响功能预期）
+
+**① 进度是「算出来的」，不是读出来的 —— 拖动进度条它检测不到。**
+它靠「检测指定进程有没有在发声」判断暂停，再自行推进进度。
+**例外**：网易云音乐、全民Ｋ歌已单独适配 —— C# 探针用 UI Automation 读主窗口的 `MM:SS / MM:SS`，
+能实时捕捉拖动；此时才额外输出 `Progress:currentSec|totalSec`。
+
+⇒ 用户当前的平台是**洛雪（lx）**，属于「不跟 seek」那一类。
+**为此岛上不需要做任何额外改动**：seek 的可交互性由 `isStageControlActive()` 决定，
+LX 上 Stage 未核对通过 → 进度条本来就不可拖，**不会给出按不动的 affordance**。
+**但要在文档与设置页如实标注**：这个源的进度只跟播放/暂停，不跟 seek。
+
+实测进度确实是活的：间隔 3s 两次 `187517 → 190532`，**delta 3.02s**。
+
+**② 它报的歌是「它按自己配置的平台抓的」，不等于系统正在播的那首。**
+与 Folia/Stage 一样**必须做身份核对**才能用在岛上的当前曲目上。
+
+### 14.5 接入设计（下一步照此实现）
+
+**它给我们补的是什么**（对洛雪这类**没有 SMTC 时间线**的平台尤其关键）：
+
+- **逐字歌词**（`karaokeLyric`，QRC）—— 与 Folia 32109 同一个用途，而 32109 用户已主动关闭；
+- **翻译歌词**（`translatedLyric`，有则用）；
+- **进度**（活的时间轴，SMTC 在 LX 上给不出）；
+- **封面**（`cover`，实测是网易云 `param=500y500` 的 URL）。
+
+**怎么接**：
+
+- 新增 `src/services/playbackSources/nowplaying.ts`，入口 `fetchNowPlayingSnapshot(want)`，
+  **永不抛异常**；1.2s 真超时（`AbortController`）；`/api/query` + `/api/lyric` 两次请求。
+- **身份核对用「宽松」档**（与 Stage 同一档，不是 Folia 的严格档）：
+  判据 = 曲名或歌手任一归一化后互相包含 **+ 时长相容（±15s）**。
+  理由同 Stage：猜错的代价是进度/歌词偏一点（下一拍自我纠正），误杀的代价是功能整块不生效。
+  **但它比 Folia 好核**：它有独立的 `title`/`author`/`duration` 字段，
+  不需要像 Folia 那样从 `lines[0]` 猜身份。
+- **采纳门槛按用途分层**（这是本项目踩了四次误杀换来的口径）：
+  - 进度/时长 → 宽松档（自纠正）；
+  - **歌词 → 需要能拒绝**：`/api/lyric` 自己回了 `title`/`author`/`duration`，
+    用「曲名≥0.9 且总分≥70」或「任一位歌手≥0.9 且时长相容」两条路径**任一命中**才采用
+    （即 Folia 那套 `isSameTrack` + 路径 B，直接复用 `matcher.ts`）。否则丢弃并回落级联。
+- **不要用 `track.url` / `track.id` 做身份**：实测 `platform:lx` 时
+  `url` 是 `https://music.youtube.com/watch?v=dQw4w9WgXcQ`（而 `id` 又像网易云的 `3399839173`）
+  —— 这两个字段跟着「匹配到的歌词源」走，不是稳定身份。**只用 title/author/duration/cover。**
+- 设置项并入现有「歌曲」页（不新增第 10 页）：开关 + endpoint（默认 `http://127.0.0.1:9863`）+ 超时。
+- **诊断旁路照 P1 的模板配一条**（`status.ts`）：结论枚举 `ok/disabled/unreachable/noSong/mismatch`
+  + 我们请求的曲目 + 接口报的曲目 + 两侧时长，设置页每 1s 轮询显示。
+- capability 无需改动：`http://127.0.0.1:9863/*` 已在 P0 的白名单里。
+
+### 14.6 取证方法论（可复用）
+
+1. **安装目录优先于文档**：`config.json` / `Settings/settings-*.json`（**用户的平台配置**）/
+   `now-playing.log`（Spring Boot 启动日志**直接打出监听端口**，logger 名还暴露了控制器类名）/
+   `Outputs/*.txt`（直播输出模板，能反推字段含义）。
+2. **由日志里的 logger 名反推源码路径**：`c.w.nowplaying.controller.WebSocketLyricController`
+   ⇒ `src/main/java/com/widdit/nowplaying/controller/WebSocketLyricController.java`。
+   直接读到 `@GetMapping` 原文与实体字段名，比搜文档/猜端点可靠得多。
+3. **版本号决定信任度**：安装版 0.1.0 vs 仓库 master ⇒ 源码契约只能当"待验证假设"，
+   **最终必须用真机响应逐字段核对**（本次核对结果：完全一致）。
+4. **单位要用同一时刻的两个端点互证**（`175` vs `175149`），
+   **"是不是活的"要间隔采样看增量**（3s → 3.02s）。
+
+### 14.7 P2 已落地（歌词侧）+ 真机验证抓到的三个 bug
+
+**代码**：`src/services/playbackSources/nowplaying.ts`（两个入口：`fetchLyricsFromNowPlaying(want)`
+与 `fetchNowPlayingSnapshot()`）、`lyricNoise.ts`（与 Folia 共用的「非歌词行」过滤器）。
+级联位置：Folia → **nowplaying** → netease → qqmusic → kugou → LRCLIB（`LyricsProvider` 加了 `"nowplaying"`）。
+设置字段 3 个：`nowPlayingEnabled`/`nowPlayingBase`/`nowPlayingTimeoutMs`（**UI 尚未接，下一步**）。
+
+**验证方式（可复用）**：`Temp/np-loader.mjs` 是一个 Node 模块加载器，把
+`@tauri-apps/plugin-http` 桥到 Node 原生 fetch、把 `stores/settings` 换成桩、并给相对导入补 `.ts`
+—— 于是 `Temp/verify-nowplaying.mts` 能 **import 项目里真实的 `nowplaying.ts`** 打真机 9863，
+而不是抄一份解析器（抄一份等于没验证）。4 个门禁分支 + 逐字完整性 + 噪声自检一次跑完。
+
+**真 payload 抓到的三个 bug（都是猜不出来的）**：
+
+**① 署名行的字段名是开放集合，而且中英混排、间距无规律。**
+```
+词Lyricist：郑浩            出品人 Publisher：颜陌
+监制Executive Producer：…   制作人Music Producer：…
+Bass：苏虹文                制作团队：拨片音乐
+推广支持：QQ音乐·银河计划     艺术指导：程楚楚(廊坊师范学院）
+```
+第一版只写 `^(中文字段)\s*[：:]` → 漏掉所有「中文字段+英文标签」；
+第二版补了英文标签 → 又漏掉**纯英文字段**（`Bass：`）与列表外的中文字段（`制作团队：`/`推广支持：`）。
+最终形态是**三分支**：中文字段(+可选拉丁标签) | 纯拉丁字段，且都**必须紧跟冒号**。
+⇒ **教训：这类「标签：值」的元数据不能靠枚举字段名收尾，每换一首歌就可能冒出新字段。
+判据要留出「未知字段」的位置**（这里的做法是放开纯拉丁分支 + 允许中间夹一段英文）。
+
+**② 标题卡会作为第一行歌词出现，而它既不是零长度行、也不是署名行。**
+实测 `[0→436] 琵琶曲DJ筱轩版 - 郑浩/冰洁` —— 有真实时长（436ms），所以
+`startTime >= endTime` 那条零长度过滤抓不到；`stripNoise` 也抓不到。
+判据用 `textMentionsTrack`（**同时**提到我们的曲名与歌手）而不是解析 `" - "`：
+分隔符写法列不全。**要求歌手非空**才判，否则同名歌名句会被误删。
+（Folia 那边靠 `identityCandidates` + `isSameTrack` 处理同一件事，两条路殊途同归。）
+
+**③ `isSameArtist` 对「父串包含子串」只给 0.8，门槛是 0.9 → 多歌手的歌永远过不了路径 B。**
+SMTC 报 `郑浩 / 冰洁`，接口报 `["郑浩", "冰洁"]`：`artistScore` 走包含分支给 0.8，
+`isSameArtist` 要求 ≥0.9 → **真机实测路径 B 直接丢弃**（本该采用）。
+修法：把它**拆成单个歌手两两比**（`anyArtistMatches`），精确相等即 1.0。
+⇒ **教训：`isSameArtist` 的入参假设是「单歌手」，而 SMTC 给的是多歌手拼接串。
+凡是要用打分函数的地方，先确认它期望的粒度与调用方给的是否一致。**
+
+**④ 顺带更正一个测试设计错误（不是代码 bug）**：我最初用「把 want 时长调大」来测拒绝，
+结果它**合法地采用了** —— 因为时长判据刻意不对称（**可以早**：歌词比歌短是常态）。
+要触发拒绝必须让 **want 更短**（歌词跨度超出曲终 +10s）。
+**测试用例必须照着判据的不对称性写，否则会把自己的正确实现判成 bug。**
+
+

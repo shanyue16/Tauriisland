@@ -166,3 +166,76 @@ export function describeControlStatus(s: ControlStatus): string {
   if (s.ok) return `上一次控制：${s.action} → ${via}（成功）`;
   return `上一次控制：${s.action} → ${via}（失败${s.detail ? `：${s.detail}` : ""}）`;
 }
+
+// ————————————————————————————————————————————————————————————————
+// Now Playing（Widdit/now-playing-service，9863）
+//
+// 与本地歌词源同一个理由：它按设计**静默降级**，所以「没拿到逐字歌词 / 进度条不动」
+// 时必须有地方能看出是「没开」「没在放」「曲目对不上」还是「接口正常但没有歌词」。
+//
+// 一个槽位、两种用途（取歌词 / 取进度）—— 由 `detail` 前缀区分，`at` 给出新鲜度。
+// 刻意不复用 `LocalLyricStatus`：那个的 `outcome` 枚举是给 Folia 的
+// 「200 + null = 没在播」语义定的，而这里多了 `noSong`（`hasSong:false`）这一档。
+// ————————————————————————————————————————————————————————————————
+
+export type NowPlayingOutcome =
+  /** 核对通过并采用（歌词或进度） */
+  | "ok"
+  /** 设置里关掉了 / 地址为空 */
+  | "disabled"
+  /** 连不上：没在跑、端口不通、超时、响应不是 JSON */
+  | "unreachable"
+  /** 接口通，但当前没有在放的东西（`player.hasSong === false`） */
+  | "noSong"
+  /** 接口通、有歌，但这份歌词过滤后没有可用行 */
+  | "empty"
+  /** 曲目**明确**对不上 —— 身份读出来了，但不是岛上在放的那首 */
+  | "mismatch"
+  /** 已采用，但**无法核对**（接口没报曲目）—— 与 mismatch 严格区分 */
+  | "assumed";
+
+export interface NowPlayingStatus {
+  at: number;
+  outcome: NowPlayingOutcome;
+  /** 我们这边正在放的曲目（SMTC）。取进度那条路径拿不到，留空。 */
+  want?: string;
+  wantDurationMs?: number;
+  /** 接口自己报的曲目 */
+  got: string | null;
+  gotDurationMs?: number;
+  /** 歌词覆盖的时间跨度（ms）—— 与 wantDurationMs 一起看就能判断是不是同一首 */
+  gotSpanMs?: number;
+  positionMs?: number;
+  /** 是否已采纳（歌词核对通过 / 进度确认同曲） */
+  matched?: boolean;
+  detail?: string;
+}
+
+let lastNowPlaying: NowPlayingStatus | null = null;
+
+export function recordNowPlayingStatus(entry: Omit<NowPlayingStatus, "at">): void {
+  lastNowPlaying = { ...entry, at: Date.now() };
+}
+
+export function getNowPlayingStatus(): NowPlayingStatus | null {
+  return lastNowPlaying;
+}
+
+export function describeNowPlayingOutcome(outcome: NowPlayingOutcome): string {
+  switch (outcome) {
+    case "ok":
+      return "正常（已采用）";
+    case "disabled":
+      return "已关闭";
+    case "unreachable":
+      return "连不上（Now Playing 没在跑）";
+    case "noSong":
+      return "接口正常，但当前没有在放的东西";
+    case "empty":
+      return "接口正常，但没有可用歌词行";
+    case "mismatch":
+      return "曲目对不上（它报的是另一首歌）→ 未采用";
+    case "assumed":
+      return "已采用（接口没报曲目，无法核对）";
+  }
+}

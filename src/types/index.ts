@@ -119,6 +119,20 @@ export interface Settings {
   stageApiEndpoint: string;
   /** 单次请求超时（ms）。本机回环服务不该慢。 */
   stageApiTimeoutMs: number;
+  /**
+   * Now Playing（`Widdit/now-playing-service`，默认 9863）—— 本机第三方「正在播放」服务。
+   *
+   * 它是**唯一同时给逐字歌词与播放进度**的本地源（无鉴权），所以默认开启；
+   * 没装/没开时只是几次毫秒级的连接失败，静默降级到 SMTC + 网络级联。
+   *
+   * ⚠️ 它的进度是**推算**的：只跟播放/暂停，**不跟 seek**（网易云/全民K歌除外）。
+   * 这是它的设计，不是故障 —— 见 `playbackSources/nowplaying.ts` 文件头。
+   */
+  nowPlayingEnabled: boolean;
+  /** 服务地址（无尾斜杠）。端口默认 9863，可在它的 config.json 里改。 */
+  nowPlayingBase: string;
+  /** 单次请求的真超时（ms）—— 本机回环服务要么秒回、要么没在跑。 */
+  nowPlayingTimeoutMs: number;
 
   // 通知
   /** 是否读取系统通知（读取的是用户全部系统通知，默认开启） */
@@ -190,6 +204,10 @@ export const DEFAULT_SETTINGS: Settings = {
   stageApiToken: "",
   stageApiEndpoint: "http://127.0.0.1:32107",
   stageApiTimeoutMs: 1200,
+  // Now Playing（9863）：默认开启，没装/没开时静默降级
+  nowPlayingEnabled: true,
+  nowPlayingBase: "http://127.0.0.1:9863",
+  nowPlayingTimeoutMs: 1200,
 
   // 通知（用户口径：默认开启读取、默认不过滤）
   notificationsEnabled: true,

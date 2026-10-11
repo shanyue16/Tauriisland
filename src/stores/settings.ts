@@ -144,6 +144,10 @@ function normalizeSettings(raw: unknown): Settings {
     stageApiToken: typeof r.stageApiToken === "string" ? r.stageApiToken.trim() : d.stageApiToken,
     stageApiEndpoint: normalizeEndpoint(r.stageApiEndpoint, d.stageApiEndpoint),
     stageApiTimeoutMs: num(r.stageApiTimeoutMs, d.stageApiTimeoutMs, 300, 5000),
+    // Now Playing（9863）
+    nowPlayingEnabled: bool(r.nowPlayingEnabled, d.nowPlayingEnabled),
+    nowPlayingBase: normalizeEndpoint(r.nowPlayingBase, d.nowPlayingBase),
+    nowPlayingTimeoutMs: num(r.nowPlayingTimeoutMs, d.nowPlayingTimeoutMs, 300, 5000),
     // 通知（数组缺失→空数组＝不过滤；默认开启读取）
     notificationsEnabled: bool(r.notificationsEnabled, d.notificationsEnabled),
     notificationBlacklist: normalizeBlacklist(r.notificationBlacklist),
