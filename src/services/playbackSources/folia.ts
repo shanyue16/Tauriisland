@@ -33,17 +33,54 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useSettings } from "../../stores/settings";
 import type { LyricLine, LyricWord } from "../../types/lyrics";
-import { isSameArtist, isSameTrack } from "../lyricsProviders/matcher";
+import { isSameArtist, isSameTrack, textMentionsTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
 import { recordLocalLyricStatus } from "./status";
 
 const LOG = "[Folia]";
 
-/** `......` 之类的前奏占位行（实测样本里出现过） */
+/**
+ * `......` 之类的前奏占位行（实测样本里出现过）
+ */
 const PLACEHOLDER = /^[.．。…·\s]+$/;
 
-/** 曲名与歌手的官方分隔符 */
-const SEP = " - ";
+/**
+ * 标题卡的分隔符写法**并不统一**：实测遇到过 `"曲名 - 歌手"`（两侧带空格）
+ * 与 `"曲名-歌手"`（不带空格）两种 —— 只认带空格的那种会把整份歌词误判成
+ * 「没有身份」而丢弃（曾因此让一首歌完全没有逐字歌词）。所以带空格的优先、
+ * 再退化到各种裸符号。
+ *
+ * 宽松解析是安全的：切错了只会产出对不上身份的候选，被后面的门禁拒掉；
+ * 真正的风险（把真实歌词行误当标题卡丢掉）由「歌手必须吻合」那一步兜住。
+ */
+const SEPARATORS = [" - ", " – ", " — ", "-", "–", "—", "－"];
+
+/**
+ * 把 `"<曲名> - <歌手1>/<歌手2>"` 解析成候选。
+ *
+ * 每个分隔符的首尾两个位置各给一个切点：曲名自己可能含分隔符，
+ * 由调用方用 `isSameTrack` / `isSameArtist` 挑出真正吻合的那个（都不吻合就整份丢弃）。
+ */
+function identityCandidates(text: string): Candidate[] {
+  const t = text.trim();
+  if (!t) return [];
+  const out: Candidate[] = [];
+  for (const sep of SEPARATORS) {
+    for (const idx of [t.indexOf(sep), t.lastIndexOf(sep)]) {
+      if (idx <= 0) continue;
+      const title = t.slice(0, idx).trim();
+      if (!title || out.some((c) => c.title === title)) continue;
+      const artists = t
+        .slice(idx + sep.length)
+        .split("/")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (artists.length === 0) continue;
+      out.push({ id: "lines[0]", title, artists });
+    }
+  }
+  return out;
+}
 
 // ===== 原始响应形状（一律按 unknown 处理，防御式读取） =====
 
@@ -90,30 +127,6 @@ function readConfig() {
     timeoutMs: s.localLyricTimeoutMs,
     wordByWord: s.wordByWordEnabled,
   };
-}
-
-/**
- * 把 `"<曲名> - <歌手1>/<歌手2>"` 解析成候选。
- *
- * 首尾两个 ` - ` 各给一个切点：曲名自己可能含 ` - `，
- * 由调用方用 `isSameTrack` 挑出真正吻合的那个（都不吻合就整份丢弃）。
- */
-function identityCandidates(text: string): Candidate[] {
-  const t = text.trim();
-  if (!t) return [];
-  const out: Candidate[] = [];
-  for (const idx of [t.indexOf(SEP), t.lastIndexOf(SEP)]) {
-    if (idx <= 0) continue;
-    const title = t.slice(0, idx).trim();
-    if (!title || out.some((c) => c.title === title)) continue;
-    const artists = t
-      .slice(idx + SEP.length)
-      .split("/")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    out.push({ id: "lines[0]", title, artists });
-  }
-  return out;
 }
 
 /** 从响应里读出「接口自己在放哪首歌」——顶层可选字段优先，缺失才看 lines[0] */
@@ -242,8 +255,15 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     ? [{ id: "top", title: topTitle, artists: topArtist ? [topArtist] : [] }]
     : firstCandidates;
 
-  // 路径 A（严格）：曲名 + 歌手 + 时长都对得上
-  const strict = selfCandidates.some((c) => isSameTrack(c, want));
+  // 路径 A（严格）：曲名 + 歌手（+ 时长）都对得上
+  const strictCandidate = selfCandidates.some((c) => isSameTrack(c, want));
+  // 路径 A 的兜底：分隔符写法没法穷举，解析不出结构时改为直接看
+  // 「lines[0] 这段文本是否同时提到我们的曲名与歌手」——
+  // 实测 `如今的生活能不能放过我-姚文乐`（破折号不带空格）就是靠这一步救回来的。
+  const mentioned =
+    selfCandidates.length === 0 &&
+    textMentionsTrack(str(rawLines[0]?.text), want);
+  const strict = strictCandidate || mentioned;
   // 路径 B（歌手 + 时长）：曲名对不上，但歌手强匹配**且**歌词时间跨度与曲长相容。
   // 实测案例：歌词自带的标题是「还在假装」，播放器与 Folia 放的却是「假装放下」——
   // 同一首歌、歌词源叫法不同。只走路径 A 会把它整份丢掉。
@@ -256,19 +276,21 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     console.info(`${LOG} 曲目不匹配，丢弃（接口在放：${got ?? "未知"}）`);
     return null;
   }
-  const byLength = !strict && lenient;
+  const byLength = !strictCandidate && !mentioned && lenient;
 
   // —— ② 标题卡过滤 ——
   // 只在第 0 行判定、且**必须内容吻合**才丢：官方明确 lines 是按时间排序的歌词行，
   // lines[0] 不保证是元数据。实测样本它都是标题卡，形如
   // "还在假装 - 刀酱"，而且**带真实时长与逐字时间轴**（0→0.6s），
   // 所以「零长度」「占位行」两类过滤都抓不到它，只能靠内容识别。
-  // 判据 = 能解析出歌手**且歌手与我们吻合**：真正的歌词行几乎不会长成
-  // "<某文本> - <我们的歌手>"，而标题卡一定会（实测 54 行里只有 1 行含 " - "）。
+  // 判据 = 能解析出歌手**且歌手与我们吻合**（或整段文本同时提到曲名与歌手）：
+  // 真正的歌词行几乎不会长成 "<某文本> - <我们的歌手>"，而标题卡一定会。
   // 这里刻意**不要求曲名也吻合** —— 本路径存在的理由就是曲名可能不一致。
-  const metaIndex = firstCandidates.some((c) => isSameArtist(c, want) || isSameTrack(c, want))
-    ? 0
-    : -1;
+  const metaIndex =
+    mentioned ||
+    firstCandidates.some((c) => isSameArtist(c, want) || isSameTrack(c, want))
+      ? 0
+      : -1;
 
   // —— ③ 换算 ——
   const offsetMs = num(raw.offset) ?? 0;
@@ -316,8 +338,14 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   recordLocalLyricStatus({
     ...withGot,
     outcome: "ok",
-    // 走备用路径时说明白，用户才知道这条歌词的曲名跟播放器不一致是正常的
-    detail: byLength ? "按歌手 + 时长吻合采用（歌词自带的曲名与播放器不一致）" : undefined,
+    // 说明白是哪条路径采用、以及有没有逐字 —— 否则「已命中但没逐字」又得猜一轮
+    detail:
+      [
+        byLength ? "按歌手 + 时长吻合采用（歌词自带的曲名与播放器不一致）" : null,
+        keepWords ? null : "这份歌词只有行级时间（wordByWord=false），未做逐字",
+      ]
+        .filter(Boolean)
+        .join("；") || undefined,
   });
   console.info(
     `${LOG} 命中 "${label}"（${lines.length} 行，逐字=${keepWords}，offset=${offsetMs}ms，` +

@@ -96,6 +96,25 @@ export function isSameArtist(c: Candidate, want: WantInfo): boolean {
   return artistScore(want.artist, c.artists) >= 0.9;
 }
 
+/**
+ * 兜底身份判据：这段文本是否**同时**提到了我们的曲名与歌手。
+ *
+ * 为什么需要：外部源给的「曲名 - 歌手」写法并不统一（`-` 两侧带不带空格、
+ * 用 `–`/`—`、`【曲名】歌手` …），按分隔符解析总有漏网的写法。
+ * 但只要那段文本**同时**含曲名与歌手，就足以说明它写的就是这首歌 ——
+ * 比「先解析成结构再比对」更抗格式变化。
+ *
+ * 刻意要求曲名长度 ≥ 2：一两个字的曲名太容易碰巧出现在别的文本里。
+ */
+export function textMentionsTrack(text: string, want: WantInfo): boolean {
+  const t = norm(text);
+  const title = norm(want.title);
+  if (!t || !title || title.length < 2) return false;
+  if (!t.includes(title)) return false;
+  const artist = norm(want.artist);
+  return artist ? t.includes(artist) : true; // 没有歌手信息时，曲名命中即可
+}
+
 /** 取最高分候选；空列表返回 null（同分时保持接口原顺序） */
 export function pickBest(list: Candidate[], want: WantInfo): Candidate | null {
   let best: Candidate | null = null;
