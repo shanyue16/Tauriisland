@@ -138,6 +138,7 @@ function normalizeSettings(raw: unknown): Settings {
     localLyricEndpoint: normalizeEndpoint(r.localLyricEndpoint, d.localLyricEndpoint),
     localLyricTimeoutMs: num(r.localLyricTimeoutMs, d.localLyricTimeoutMs, 300, 5000),
     wordByWordEnabled: bool(r.wordByWordEnabled, d.wordByWordEnabled),
+    localLyricTrust: bool(r.localLyricTrust, d.localLyricTrust),
     // 通知（数组缺失→空数组＝不过滤；默认开启读取）
     notificationsEnabled: bool(r.notificationsEnabled, d.notificationsEnabled),
     notificationBlacklist: normalizeBlacklist(r.notificationBlacklist),

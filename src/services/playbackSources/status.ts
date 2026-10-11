@@ -20,8 +20,13 @@ export type LocalLyricOutcome =
   | "idle"
   /** 拿到了数据，但过滤后没有可用歌词行 */
   | "empty"
-  /** 曲目对不上 —— 接口在放的是另一首歌 */
-  | "mismatch";
+  /** 曲目**明确**对不上 —— 解析出了身份，但它与岛上在放的不是同一首 */
+  | "mismatch"
+  /**
+   * 已采用，但**无法核对曲目**（歌词文件里没有可解析的曲目信息，或用户开了「完全信任」）。
+   * 与 `mismatch` 严格区分：「没有证据」不等于「反证」。
+   */
+  | "assumed";
 
 export interface LocalLyricStatus {
   /** 记录时间（Date.now()） */
@@ -64,5 +69,7 @@ export function describeOutcome(outcome: LocalLyricOutcome): string {
       return "取到了数据，但没有可用歌词行";
     case "mismatch":
       return "曲目对不上（接口在放另一首歌）";
+    case "assumed":
+      return "已采用（无法核对曲目，详见说明）";
   }
 }

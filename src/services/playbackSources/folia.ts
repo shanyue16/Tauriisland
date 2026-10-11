@@ -45,6 +45,36 @@ const LOG = "[Folia]";
 const PLACEHOLDER = /^[.．。…·\s]+$/;
 
 /**
+ * 署名行：`词：许嵩` / `曲：许嵩` / `编曲：田汨` / `制作人：…`。
+ * 实测 Folia 的载荷里混着这类元数据（`惊鸿一面` 那份前 5 行全是），它们不是歌词。
+ *
+ * 注意必须同时收 `词`/`曲` 这两种**单字**写法 —— 实测数据里就是 `词：许嵩`
+ * 而不是 `作词：许嵩`。**冒号是必需的**，所以 `曲终人散…` 这类真实歌词行不会误伤。
+ */
+const CREDIT =
+  /^(作词|作曲|编曲|填词|混音|母带|制作人|监制|出品|发行|录音|吉他|贝斯|鼓|键盘|和声|统筹|企划|演唱|原唱|词|曲|op|ed)\s*[：:]/i;
+
+/** 版权声明行。实测原文：`未经著作权人书面许可不得以任何方式（包括翻唱、翻录等）使用` */
+const COPYRIGHT = /(著作权|版权所有|未经许可|未经授权|翻唱|翻录|侵权|必究)/;
+
+/** 纯角色标记行（对唱标注），如 `男：` / `女：` / `合：` —— 冒号后面没有内容 */
+const ROLE_ONLY = /^(男|女|合|合唱|全体)\s*[：:]\s*$/;
+
+/**
+ * 这一行是不是「根本不是歌词」的元数据/声明行。
+ *
+ * **为什么要单独判**：这些行既不是标题卡（解析不出身份），也不是零长度行，
+ * 所以身份门禁和标题卡判定都不会动它们 —— 最终会原样当成歌词显示在岛上，
+ * 用户看到的就是版权声明和 `op：xxx` 混在歌词中间。实测 `皎皎月亮船` 那份
+ * 40 行里有 3 行是这样的（`op：风升乐起` / `......` / 版权声明）。
+ */
+function isNonLyricLine(text: string): boolean {
+  return (
+    PLACEHOLDER.test(text) || CREDIT.test(text) || COPYRIGHT.test(text) || ROLE_ONLY.test(text)
+  );
+}
+
+/**
  * 标题卡的分隔符写法**并不统一**：实测遇到过 `"曲名 - 歌手"`（两侧带空格）
  * 与 `"曲名-歌手"`（不带空格）两种 —— 只认带空格的那种会把整份歌词误判成
  * 「没有身份」而丢弃（曾因此让一首歌完全没有逐字歌词）。所以带空格的优先、
@@ -142,6 +172,7 @@ function readConfig() {
     endpoint: s.localLyricEndpoint,
     timeoutMs: s.localLyricTimeoutMs,
     wordByWord: s.wordByWordEnabled,
+    trust: s.localLyricTrust,
   };
 }
 
@@ -288,11 +319,24 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     selfCandidates.some((c) => isSameArtist(c, want)) &&
     isLengthCompatible(gotSpanMs, want.durationMs);
 
-  if (!strict && !lenient) {
+  // —— 三种结果必须严格分开 ——
+  // 之前把它们塞进同一个 mismatch 出口，结果**连误杀四首**，而且每次都得靠
+  // 打印真实 payload 才能定位。三种情况的性质和处置完全不同：
+  //   ① 核对通过          → 采用
+  //   ② **解析出身份、但明确对不上** → 丢弃（这才是真正的保护）
+  //   ③ **压根解析不出身份**        → 采用。**没有证据 ≠ 反证。**
+  // ③ 的实测案例：`op：风升乐起` 是歌词文件自带的**片头标记**，不是歌名
+  // （那份歌词后面就是《皎皎月亮船》的正文）。拿它当「接口在放另一首歌」
+  // 把整份丢掉，用户就永远拿不到那份本来正确的歌词。
+  const hasIdentity = topTitle !== "" || firstCandidates.length > 0;
+  const matched = strict || lenient;
+  if (!matched && hasIdentity && !cfg.trust) {
     recordLocalLyricStatus({ ...withGot, outcome: "mismatch" });
-    console.info(`${LOG} 曲目不匹配，丢弃（接口在放：${got ?? "未知"}）`);
+    console.info(`${LOG} 曲目明确不符，丢弃（接口在放：${got ?? "未知"}）`);
     return null;
   }
+  /** 采用了、但**没法核对**（解析不出身份，或用户开了「完全信任本地歌词」） */
+  const assumed = !matched;
   const byLength = !strictCandidate && !mentioned && lenient;
 
   // —— ② 标题卡过滤 ——
@@ -325,7 +369,7 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     const end = num(rl?.endTime);
     if (!text || start === null || end === null) continue;
     if (end <= start) continue; // 零长度行（推广行，如『听歌就在中国酷狗*星曜计划』）
-    if (PLACEHOLDER.test(text)) continue;
+    if (isNonLyricLine(text)) continue; // 占位行 / 署名 / 版权声明 / 片头标记 / 纯角色行
 
     const timeMs = msOf(start, offsetMs);
     const line: LyricLine = { time_ms: timeMs, text };
@@ -354,11 +398,17 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
 
   recordLocalLyricStatus({
     ...withGot,
-    outcome: "ok",
-    // 说明白是哪条路径采用、以及有没有逐字 —— 否则「已命中但没逐字」又得猜一轮
+    outcome: assumed ? "assumed" : "ok",
+    // 说明白是哪条路径采用、为什么没能核对、以及有没有逐字 ——
+    // 否则「已命中但没逐字」「采用了但可能不是这首」又得各猜一轮
     detail:
       [
         byLength ? "按歌手 + 时长吻合采用（歌词自带的曲名与播放器不一致）" : null,
+        assumed
+          ? cfg.trust
+            ? "已开启「完全信任本地歌词」：未核对曲目"
+            : "歌词文件里没有可解析的曲目信息，无法核对，按接口内容采用"
+          : null,
         keepWords ? null : "这份歌词只有行级时间（wordByWord=false），未做逐字",
       ]
         .filter(Boolean)
@@ -366,7 +416,7 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   });
   console.info(
     `${LOG} 命中 "${label}"（${lines.length} 行，逐字=${keepWords}，offset=${offsetMs}ms，` +
-      `${byLength ? "歌手+时长吻合" : "严格匹配"}）`
+      `${assumed ? (cfg.trust ? "完全信任" : "无身份信息") : byLength ? "歌手+时长吻合" : "严格匹配"}）`
   );
   // Folia 不给时长（它不播音频，只镜像别的播放器）→ duration 交回调用方已有的来源
   return { lines, duration: null };

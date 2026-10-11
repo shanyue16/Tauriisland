@@ -93,6 +93,18 @@ export interface Settings {
    * 关掉则只按行高亮；数据侧照样取，只是不保留逐字时间轴。
    */
   wordByWordEnabled: boolean;
+  /**
+   * 完全信任本地歌词：**接口只要返回歌词就直接用，不核对曲目**。
+   *
+   * 默认「否」——此时仍会核对，但核对只在**解析得出身份**时才生效：
+   * 歌词文件里没有可解析的曲目信息（实测 `op：风升乐起` 这种片头标记）
+   * 会被当作「无法核对」而采用，不会被误当成「不符」丢掉。
+   *
+   * 打开后连「明确不符」也采用 —— 适用于「Folia 就是我的歌词显示、
+   * 里面放的一定是我在听的那首」的用法。代价：Folia 若切到了别的歌，
+   * 岛上会显示那首歌的歌词（与 Folia 窗口一致，肉眼可见、可自行关掉）。
+   */
+  localLyricTrust: boolean;
 
   // 通知
   /** 是否读取系统通知（读取的是用户全部系统通知，默认开启） */
@@ -159,6 +171,7 @@ export const DEFAULT_SETTINGS: Settings = {
   localLyricEndpoint: "http://127.0.0.1:32109/v1/lyric",
   localLyricTimeoutMs: 1200,
   wordByWordEnabled: true,
+  localLyricTrust: false,
 
   // 通知（用户口径：默认开启读取、默认不过滤）
   notificationsEnabled: true,

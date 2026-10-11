@@ -310,6 +310,21 @@ export default function WhitelistSettings() {
           />
         </div>
 
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] opacity-80">完全信任本地歌词</div>
+            <div className="text-[10px] opacity-45 leading-relaxed mt-0.5">
+              接口只要返回歌词就直接用，不核对曲目。适用于把 Folia 当作歌词显示、
+              里面放的一定是你在听的那首的情况。默认关闭时仍然核对，
+              但歌词文件里没有可解析的曲目信息时会直接采用（不误杀）。
+            </div>
+          </div>
+          <div
+            className={`switch shrink-0${settings.localLyricTrust ? " active" : ""}`}
+            onClick={() => updateSettings({ localLyricTrust: !settings.localLyricTrust })}
+          />
+        </div>
+
         <button
           type="button"
           onClick={() => void handleProbe()}
