@@ -20,3 +20,9 @@ dist/
 .DS_Store
 *.log
 WIndhawk-Taskbar Clock Customization.txt
+
+#缓存
+Temp/
+
+# TypeScript 增量编译产物（tsc 每次构建都会生成）
+tsconfig.tsbuildinfo
