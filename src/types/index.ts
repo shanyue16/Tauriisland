@@ -105,6 +105,20 @@ export interface Settings {
    * 岛上会显示那首歌的歌词（与 Folia 窗口一致，肉眼可见、可自行关掉）。
    */
   localLyricTrust: boolean;
+  /**
+   * Stage API（Folia 32107）：**唯一能给出播放进度的本地源**。
+   *
+   * 实测它能给曲名 / 歌手 / 专辑 / 时长 / 当前位置 / 播放状态 / 封面，以及
+   * `controlCapabilities`（play/pause/resume/seek/previous/next）。
+   * 但除 `/stage/health` 外**全部需要 Bearer token** —— 所以默认关闭，
+   * 没填 token 时必然 401。
+   */
+  stageApiEnabled: boolean;
+  /** Stage API 的 Bearer token（在 Folia 的 Stage Mode 里复制）。只存在本地设置里。 */
+  stageApiToken: string;
+  stageApiEndpoint: string;
+  /** 单次请求超时（ms）。本机回环服务不该慢。 */
+  stageApiTimeoutMs: number;
 
   // 通知
   /** 是否读取系统通知（读取的是用户全部系统通知，默认开启） */
@@ -172,6 +186,10 @@ export const DEFAULT_SETTINGS: Settings = {
   localLyricTimeoutMs: 1200,
   wordByWordEnabled: true,
   localLyricTrust: false,
+  stageApiEnabled: false,
+  stageApiToken: "",
+  stageApiEndpoint: "http://127.0.0.1:32107",
+  stageApiTimeoutMs: 1200,
 
   // 通知（用户口径：默认开启读取、默认不过滤）
   notificationsEnabled: true,

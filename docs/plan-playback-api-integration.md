@@ -246,3 +246,72 @@ UI 观感类改动需用户真机确认后再 push（项目既有规则）。
 1. **D4 发布**：版本号定多少（三处现均为 `0.1.0`）？是否建 GitHub Release（`gh` 未装，需网页手动上传或先装）？
 2. **Phase 4（Stage API + 控制）**：现在做还是等 P1–P3 稳定后再说？
 3. **LX Music**：要接的话需要先取证它的 open-api 契约（端口/端点/响应）；它是独立第三方源，与 Folia 无关。
+
+---
+
+## 11. P4 实测结果与实现（2026-10-11，真机取证）
+
+### 11.1 与计划书原本的假设不同：Stage 给的东西比预期多
+
+原计划把 32107 写成"可选、最后做、含控制"。实测（用户提供 token 后）发现它是
+**目前唯一能给出播放进度的本地源**，字段比 SMTC 还全：
+
+```jsonc
+// GET http://127.0.0.1:32107/stage/player/status   （需 Authorization: Bearer <token>）
+{
+  "domain": "player-playback", "direction": "inside-out",
+  "current": { "id": "...", "source": "kugou", "title": "캐치 캐치", "artist": "YENA",
+               "album": "LOVE CATCHER", "durationMs": 180000,
+               "coverUrl": "blob:file:///..." },          // ← blob，我们取不到
+  "playerState": "PAUSED",
+  "positionMs": 91747, "durationMs": 180000,
+  "sampledAtMs": 1791712654553,                            // ← Unix 毫秒
+  "controlCapabilities": { "play":true,"pause":true,"resume":true,"seek":true,"previous":true,"next":true },
+  "queueCapabilities": { ... }, "queue": { "currentIndex": 26, "length": 30, ... }
+}
+```
+
+三条关键实测结论：
+
+1. **`sampledAtMs` 是 Unix 毫秒**（与 `Date.now()` 同域，同一台机器同一个时钟）
+   → 可以直接当作 `useMusic` 现有那套「按基准时间戳外推」的锚点，
+   `pos = progressBase + (Date.now() - progressBaseTs) / 1000` 原样成立，**不用改 tick 的算术**。
+2. **`current.coverUrl` 可能是 `blob:file:///…`** —— Folia 渲染进程内部的对象 URL，
+   我们的 webview **取不到**。队列条目才是真的 `https://imge.kugou.com/…`。
+   → 封面**不要**指望这个字段，继续走 酷狗 union_cover / iTunes 那两条路。
+3. **`/stage/health` 免鉴权，其余一律 401**。`health` 里的 `activeEntryKind: null`
+   指的是"有没有推上去的 stage 条目"，**与播放器无关**，不要误读成"没在播"。
+
+**身份核对**：32109 的歌词（`캐치 캐치 (Catch Catch) - YENA (崔叡娜)`，末行 178.75s）
+与 32107 的 `current`（`캐치 캐치 / YENA`，`durationMs` 180000）**指向同一次播放** ——
+两个接口说的是同一件事，可以互相印证。
+
+### 11.2 本期实现（commit 见下）
+
+- `src/services/playbackSources/stage.ts`：`fetchStageSnapshot(want)` → `{snap, matched} | null`，
+  **永不抛异常**；401 / 连不上 / 超时 / 无在放项 各自区分并写入诊断。
+- 采纳门槛**刻意比 `folia.ts` 宽松**：曲名或歌手任一"归一化后互相包含" + 时长相容（±15s）。
+  理由写在文件头 —— 这里猜错只是进度条偏一点（下一拍自我纠正），
+  而误杀的代价是**这个功能永远不生效**（本项目为此已经栽过四次）。
+- `useMusic.ts` 的接线（4 处，全部只在 `matched === true` 时生效）：
+  1. `hasTimeline` 把 Stage 也算作"有真时间线" → 不再无脑按"有会话即在播"
+  2. `playing` 接受 Stage 的 `playerState === "PLAYING"`
+  3. **时长优先级链**插入 Stage（紧跟 SMTC，同为"播放器自报"信任级别）
+  4. **位置锚点**改用 Stage 的 `positionMs` / `sampledAtMs`，并把 `lastLutRef` 置空
+     （那个分支用 SMTC 的 LUT，而酷狗侧根本没有）
+- 设置新增 4 项：`stageApiEnabled`（默认关）、`stageApiToken`、`stageApiEndpoint`、
+  `stageApiTimeoutMs`。**token 只存在本机设置里，绝不进仓库。**
+- 设置页「歌曲」段新增第 ⑤ 块：开关 + token（password 输入）+ 地址 + 最近一次结论
+  （含 Stage 在放哪首、进度、播放状态、有没有采纳）。
+
+### 11.3 明确**没有**做的（留给下一轮拍板）
+
+- **控制没有接**。`controlCapabilities` 全部为 true，`POST /stage/player/control`
+  能 play/pause/resume/seek/previous/next —— 但这与本项目既定的
+  「控制始终走 SMTC」相冲突（见 §0 分工原则）。要不要为 Folia 这类源开第二个控制通道，
+  需要用户拍板，不要擅自改。
+- **暂停时的"冻结"没有额外处理**：身份核对通过且 Stage 报 PAUSED 时，
+  如果 SMTC 仍报在播，进度仍会外推。要修就得让 Stage 的 `playerState` 覆盖 SMTC 的
+  `playing`，风险是"同一首歌在 Folia 里暂停、在另一个播放器里在放"这种双源场景。
+- **封面没有从 Stage 取**（blob URL 取不到，见 11.1-2）。
+

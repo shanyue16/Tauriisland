@@ -4,6 +4,7 @@ import { fetchMusic } from "../services/music";
 import { useSettings } from "../stores/settings";
 import { fetchLyricsMulti, type LyricsResult } from "../services/lyrics";
 import { fetchLyricsFromFolia } from "../services/playbackSources/folia";
+import { fetchStageSnapshot } from "../services/playbackSources/stage";
 import { kugouLookup, type KugouTrack } from "../services/kugou";
 import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
@@ -185,13 +186,34 @@ export function useMusic() {
 
       const nowTs = Date.now();
 
+      // —— Stage API（可选）：唯一能给「播放进度」的本地源 ——
+      // 放在 SMTC 之后取，因为身份核对得先知道「我们这边在放什么」；
+      // 没启用 / 没填 token 时这里一次请求都不发（`fetchStageSnapshot` 自己判）。
+      // `matched === false`（不是这首）时**不采纳**它的进度，一切照旧。
+      const stageProbe =
+        m.active && m.title
+          ? await fetchStageSnapshot({
+              title: m.title,
+              artist: m.artist ?? "",
+              durationMs: (m.duration || 0) * 1000 || undefined,
+            })
+          : null;
+      const stageSnap = stageProbe?.matched ? stageProbe.snap : null;
+
       const rawPos = m.position || 0;
       const rawDur = m.duration || 0;
+      // Stage 报的时长（秒）；只在核对通过时非 0
+      const stageDurSec = stageSnap ? stageSnap.durationMs / 1000 : 0;
       // 时间线完全缺失的播放器（酷狗）：SMTC 没有 position/duration，
       // 且其 PlaybackStatus 可能报非播放态，这里按"有会话即视为在播"驱动本地时钟，
       // 否则进度条会永久停在 0。
-      const hasTimeline = (rawDur > 5 && rawDur < 3600) || rawPos > 0;
-      const playing = m.playing || (m.active && !hasTimeline);
+      // **Stage 有真时间线时就不需要这个兜底了** —— 否则暂停也会被当成在播。
+      const hasTimeline = (rawDur > 5 && rawDur < 3600) || rawPos > 0 || stageSnap !== null;
+      const playing =
+        m.playing ||
+        (m.active && !hasTimeline) ||
+        // Stage 说在播就按在播（酷狗在 SMTC 侧的 PlaybackStatus 不可信）
+        (stageSnap !== null && stageSnap.playerState === "PLAYING");
       const lut = m.timeline_lut ?? null;
 
       // —— 换歌检测 ——
@@ -238,6 +260,7 @@ export function useMusic() {
       // —— Duration 优先级链 ——
       // 1) SMTC 有合理值就用它：这是"播放器自己上报"的时长，与播放器界面显示天然一致
       //    （网易云/ PotPlayer 走这条；酷狗不上报时间线，所以落到 2）
+      // 1.5) Stage 的时长同样是"播放器自报"，与 SMTC 同一信任级别，所以紧跟其后
       // 2) SMTC 没有(0/超范围) → 用外部元数据源的精确时长（酷狗搜索接口 / LRCLIB）
       // 3) 都没有 → 歌词末行 + 5s 尾奏
       let effectiveDur = 0;
@@ -246,6 +269,8 @@ export function useMusic() {
 
       if (smtcPlausible) {
         effectiveDur = rawDur;
+      } else if (stageDurSec > 5 && stageDurSec < 3600) {
+        effectiveDur = stageDurSec;
       } else if (lrclibDur > 0) {
         effectiveDur = lrclibDur;
       } else if (lyricsRef.current.length > 0) {
@@ -294,6 +319,24 @@ export function useMusic() {
 
       lastLutRef.current = lut;
       lastRawPosRef.current = rawPos;
+
+      // —— Stage 的进度优先（身份核对已通过）——
+      // 为什么能直接复用外推体系：`sampledAtMs` 实测是 **Unix 毫秒**（与 Date.now() 同域），
+      // 所以它天然就是 tick 里「按基准时间戳外推」那条分支要的锚点格式 ——
+      //   pos = progressBase + (Date.now() - progressBaseTs) / 1000
+      // 于是只要把基准换成 Stage 的样本即可，不用改 tick 的算术。
+      // 顺带把 `lastLutRef` 置空：那个分支用 SMTC 的 LUT，而酷狗侧根本没有时间线；
+      // Stage 每拍都重新锚定，seek 也会自然跟上（下一拍基准直接跳到新位置）。
+      if (stageSnap) {
+        const sPosSec = stageSnap.positionMs / 1000;
+        // 采样时间戳不合理（0 / 秒级）就退回本地时钟，别拿它当基准
+        const sTs =
+          stageSnap.sampledAtMs > 1_000_000_000_000 ? stageSnap.sampledAtMs : nowTs;
+        progressBaseRef.current = sPosSec;
+        progressBaseTsRef.current = sTs;
+        effectivePosRef.current = sPosSec;
+        lastLutRef.current = null;
+      }
 
       if (playing) ensureTick();
 

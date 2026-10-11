@@ -73,3 +73,65 @@ export function describeOutcome(outcome: LocalLyricOutcome): string {
       return "已采用（无法核对曲目，详见说明）";
   }
 }
+
+// ————————————————————————————————————————————————————————————————
+// Stage API（Folia 32107）—— 与上面分开一份，因为它的字段与用途都不同：
+// 它给的是「播放进度」而不是歌词，采纳门槛也刻意更宽松（见 stage.ts 的注释）。
+// ————————————————————————————————————————————————————————————————
+
+export type StageOutcome =
+  /** 取到了快照，且与 SMTC 曲目核对通过 → 已采纳它的进度 */
+  | "ok"
+  /** 只取到了快照，但与 SMTC 曲目对不上 → **不采纳**，只用它做展示 */
+  | "mismatch"
+  /** 设置里关掉了，或还没填 token */
+  | "disabled"
+  /** 401 —— token 没填 / 填错 / 已在 Folia 里重置 */
+  | "unauthenticated"
+  /** 连不上：没在跑、端口不通、超时、响应不是 JSON */
+  | "unreachable"
+  /** 接口通，但当前没有在放的东西（`current` 为空） */
+  | "idle";
+
+export interface StageStatus {
+  at: number;
+  outcome: StageOutcome;
+  /** 我们这边正在放的曲目（SMTC） */
+  want: string;
+  wantDurationMs?: number;
+  /** Stage 自己报的曲目 */
+  got: string | null;
+  gotDurationMs?: number;
+  positionMs?: number;
+  playerState?: string | null;
+  /** 是否已采纳它的进度（身份核对通过） */
+  matched?: boolean;
+  detail?: string;
+}
+
+let lastStage: StageStatus | null = null;
+
+export function recordStageStatus(entry: Omit<StageStatus, "at">): void {
+  lastStage = { ...entry, at: Date.now() };
+}
+
+export function getStageStatus(): StageStatus | null {
+  return lastStage;
+}
+
+export function describeStageOutcome(outcome: StageOutcome): string {
+  switch (outcome) {
+    case "ok":
+      return "已采纳（进度来自 Stage API）";
+    case "mismatch":
+      return "取到了，但曲目对不上 → 未采纳";
+    case "disabled":
+      return "已关闭（或未填 token）";
+    case "unauthenticated":
+      return "401：token 没填对（Folia 里可重新复制）";
+    case "unreachable":
+      return "连不上（Folia 没在跑 / Stage Mode 没开）";
+    case "idle":
+      return "接口正常，但没有在放的东西";
+  }
+}

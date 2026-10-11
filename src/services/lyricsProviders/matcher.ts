@@ -16,7 +16,7 @@ import type { Candidate, WantInfo } from "./types";
  * （`许嵩、黄龄` / `许嵩/黄龄` / `许嵩&黄龄`），归一时必须抹平，
  * 否则「歌手一致」这条判据会因为一个连接符而失效。
  */
-function norm(s: string): string {
+export function norm(s: string): string {
   return (s || "")
     .toLowerCase()
     .replace(/[\s\-_·・、，,'"“”‘’.。!！?？:：;；()（）[\]【】<>《》/\\／|~+&]+/g, "");

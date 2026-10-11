@@ -139,6 +139,11 @@ function normalizeSettings(raw: unknown): Settings {
     localLyricTimeoutMs: num(r.localLyricTimeoutMs, d.localLyricTimeoutMs, 300, 5000),
     wordByWordEnabled: bool(r.wordByWordEnabled, d.wordByWordEnabled),
     localLyricTrust: bool(r.localLyricTrust, d.localLyricTrust),
+    stageApiEnabled: bool(r.stageApiEnabled, d.stageApiEnabled),
+    // token 是凭据：只做「是不是字符串」的兜底，**不要** trim 掉用户粘贴时可能带的空白之外的东西
+    stageApiToken: typeof r.stageApiToken === "string" ? r.stageApiToken.trim() : d.stageApiToken,
+    stageApiEndpoint: normalizeEndpoint(r.stageApiEndpoint, d.stageApiEndpoint),
+    stageApiTimeoutMs: num(r.stageApiTimeoutMs, d.stageApiTimeoutMs, 300, 5000),
     // 通知（数组缺失→空数组＝不过滤；默认开启读取）
     notificationsEnabled: bool(r.notificationsEnabled, d.notificationsEnabled),
     notificationBlacklist: normalizeBlacklist(r.notificationBlacklist),

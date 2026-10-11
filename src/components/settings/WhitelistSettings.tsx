@@ -4,8 +4,11 @@ import { fetchMusic } from "../../services/music";
 import { probeLocalLyric } from "../../services/playbackSources/folia";
 import {
   describeOutcome,
+  describeStageOutcome,
   getLocalLyricStatus,
+  getStageStatus,
   type LocalLyricStatus,
+  type StageStatus,
 } from "../../services/playbackSources/status";
 
 /**
@@ -44,6 +47,16 @@ export default function WhitelistSettings() {
   useEffect(() => {
     setLocalStatus(getLocalLyricStatus());
     const t = window.setInterval(() => setLocalStatus(getLocalLyricStatus()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  // —— Stage API（Folia 32107）——
+  // 它是唯一能给出「播放进度」的本地源，但采纳与否取决于曲目能否对上，
+  // 所以这里把「取到的是哪首 / 有没有采纳」也显示出来 —— 否则进度不对时无从判断。
+  const [stageStatus, setStageStatus] = useState<StageStatus | null>(null);
+  useEffect(() => {
+    setStageStatus(getStageStatus());
+    const t = window.setInterval(() => setStageStatus(getStageStatus()), 1000);
     return () => window.clearInterval(t);
   }, []);
   useEffect(() => {
@@ -370,6 +383,91 @@ export default function WhitelistSettings() {
             </>
           ) : (
             <div className="opacity-45">还没有取过数（换一首歌，或点上面的「检测接口」）</div>
+          )}
+        </div>
+      </div>
+
+      {/* ⑤ Stage API（Folia 32107）—— 唯一能给出播放进度的本地源 */}
+      <div className="space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[12px] font-medium">Stage API（播放进度）</div>
+            <div className="text-[11px] opacity-55 leading-relaxed mt-0.5">
+              从 Folia 的 32107 接口取真实播放进度与时长。它是唯一能给进度的本地源
+              （酷狗在系统媒体接口侧不上报时间线，那种情况下进度只能靠本地时钟外推）。
+              需要先在 Folia 里开启 Stage Mode 并复制 token，否则一律 401。
+              进度只在与系统媒体接口的曲目核对通过后采纳；对不上时完全不影响现有行为。
+            </div>
+          </div>
+          <div
+            className={`switch shrink-0${settings.stageApiEnabled ? " active" : ""}`}
+            onClick={() => updateSettings({ stageApiEnabled: !settings.stageApiEnabled })}
+          />
+        </div>
+
+        <div className="space-y-1">
+          <div className="text-[11px] opacity-80">Token</div>
+          <input
+            type="password"
+            value={settings.stageApiToken}
+            onChange={(e) => updateSettings({ stageApiToken: e.target.value })}
+            placeholder="在 Folia 的 Stage Mode 里复制"
+            className="w-full text-[12px] px-3 py-1.5 rounded-md outline-none"
+            style={{
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+          <div className="text-[10px] opacity-45 leading-relaxed">
+            只保存在本机设置里，不会进仓库。Folia 里重新生成 token 后要回来更新。
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] opacity-80">接口地址</span>
+          <input
+            type="text"
+            value={settings.stageApiEndpoint}
+            onChange={(e) => updateSettings({ stageApiEndpoint: e.target.value })}
+            placeholder="http://127.0.0.1:32107"
+            className="text-[12px] px-2 py-1 rounded-md outline-none"
+            style={{
+              width: 210,
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+        </div>
+
+        {/* 最近一次结论 —— 进度不对时唯一的排查窗口 */}
+        <div
+          className="text-[11px] leading-relaxed pt-2 space-y-0.5"
+          style={{ borderTop: "1px solid var(--island-border)" }}
+        >
+          {stageStatus ? (
+            <>
+              <div className="opacity-80">最近一次：{describeStageOutcome(stageStatus.outcome)}</div>
+              <div className="opacity-55">
+                Stage 在放：{stageStatus.got ?? "（读不到）"}
+                {fmtDur(stageStatus.gotDurationMs)}
+              </div>
+              {stageStatus.positionMs !== undefined && (
+                <div className="opacity-55">
+                  进度：{fmtDur(stageStatus.positionMs) || " 0:00"}
+                  {stageStatus.playerState ? `　${stageStatus.playerState}` : ""}
+                </div>
+              )}
+              {stageStatus.outcome === "mismatch" && (
+                <div className="opacity-45">
+                  两边的曲目对不上，所以没有采用这个进度（播放器和 Folia 放的不是同一首）。
+                </div>
+              )}
+              {stageStatus.detail && <div className="opacity-45">说明：{stageStatus.detail}</div>}
+            </>
+          ) : (
+            <div className="opacity-45">还没有取过数（开启并填好 token，播一首歌看看）</div>
           )}
         </div>
       </div>
