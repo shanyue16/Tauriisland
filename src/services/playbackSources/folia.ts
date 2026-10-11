@@ -33,7 +33,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useSettings } from "../../stores/settings";
 import type { LyricLine, LyricWord } from "../../types/lyrics";
-import { isSameTrack } from "../lyricsProviders/matcher";
+import { isSameArtist, isSameTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
 import { recordLocalLyricStatus } from "./status";
 
@@ -124,8 +124,25 @@ function readIdentity(raw: RawLyric, firstLineText: string): string | null {
   return firstLineText.trim() || null;
 }
 
-type FetchResult =
-  | { kind: "ok"; raw: RawLyric | null }
+/**
+ * 歌词时长是否与我们的曲长相容 —— 「曲名对不上」时的第二个身份依据。
+ *
+ * **为什么需要它**：歌词文件自带的标题（`lines[0]`）是**自由文本元数据**，
+ * 实测会与播放器报的曲名不一致（同一首歌的另一种叫法），只看曲名会误杀 ——
+ * 用户就永远拿不到逐字歌词。这不是该保守的地方，但也不能不设门槛。
+ *
+ * **为什么它可信**：歌词的时间轴是**按这一份录音**打出来的，所以「末行时间 vs 曲长」
+ * 比曲名可靠得多。判据刻意不对称：
+ * - **不能超**：歌词末行明显晚于曲终（+10s 以上）→ 这份歌词属于更长的录音，丢弃。
+ * - **可以早**：尾奏/间奏常常没有人声，歌词比曲子短一截是常态，所以下限放得很松。
+ * - 两侧缺任一个就不走这条路径（宁可不采用，也不冒险）。
+ */
+function isLengthCompatible(gotSpanMs: number | undefined, wantMs: number | undefined): boolean {
+  if (!gotSpanMs || !wantMs) return false;
+  return gotSpanMs <= wantMs + 10_000 && gotSpanMs >= wantMs * 0.5;
+}
+
+type FetchResult =  | { kind: "ok"; raw: RawLyric | null }
   | { kind: "error"; detail: string };
 
 /**
@@ -221,23 +238,37 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   const topTitle = str(raw.title).trim();
   const topArtist = str(raw.artist).trim();
   const firstCandidates = identityCandidates(str(rawLines[0]?.text));
+  const selfCandidates: Candidate[] = topTitle
+    ? [{ id: "top", title: topTitle, artists: topArtist ? [topArtist] : [] }]
+    : firstCandidates;
 
-  const matched = topTitle
-    ? isSameTrack({ id: "top", title: topTitle, artists: topArtist ? [topArtist] : [] }, want)
-    : firstCandidates.some((c) => isSameTrack(c, want));
+  // 路径 A（严格）：曲名 + 歌手 + 时长都对得上
+  const strict = selfCandidates.some((c) => isSameTrack(c, want));
+  // 路径 B（歌手 + 时长）：曲名对不上，但歌手强匹配**且**歌词时间跨度与曲长相容。
+  // 实测案例：歌词自带的标题是「还在假装」，播放器与 Folia 放的却是「假装放下」——
+  // 同一首歌、歌词源叫法不同。只走路径 A 会把它整份丢掉。
+  const lenient =
+    selfCandidates.some((c) => isSameArtist(c, want)) &&
+    isLengthCompatible(gotSpanMs, want.durationMs);
 
-  if (!matched) {
+  if (!strict && !lenient) {
     recordLocalLyricStatus({ ...withGot, outcome: "mismatch" });
     console.info(`${LOG} 曲目不匹配，丢弃（接口在放：${got ?? "未知"}）`);
     return null;
   }
+  const byLength = !strict && lenient;
 
   // —— ② 标题卡过滤 ——
   // 只在第 0 行判定、且**必须内容吻合**才丢：官方明确 lines 是按时间排序的歌词行，
   // lines[0] 不保证是元数据。实测样本它都是标题卡，形如
   // "还在假装 - 刀酱"，而且**带真实时长与逐字时间轴**（0→0.6s），
-  // 所以「零长度」「占位行」两类过滤都抓不到它，只能靠曲目评分识别。
-  const metaIndex = firstCandidates.some((c) => isSameTrack(c, want)) ? 0 : -1;
+  // 所以「零长度」「占位行」两类过滤都抓不到它，只能靠内容识别。
+  // 判据 = 能解析出歌手**且歌手与我们吻合**：真正的歌词行几乎不会长成
+  // "<某文本> - <我们的歌手>"，而标题卡一定会（实测 54 行里只有 1 行含 " - "）。
+  // 这里刻意**不要求曲名也吻合** —— 本路径存在的理由就是曲名可能不一致。
+  const metaIndex = firstCandidates.some((c) => isSameArtist(c, want) || isSameTrack(c, want))
+    ? 0
+    : -1;
 
   // —— ③ 换算 ——
   const offsetMs = num(raw.offset) ?? 0;
@@ -275,16 +306,22 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   }
 
   if (lines.length === 0) {
-    recordLocalLyricStatus({ outcome: "empty", want: label, got });
+    recordLocalLyricStatus({ ...withGot, outcome: "empty" });
     return null;
   }
 
   // 官方保证有序；getCurrentLyric 的二分依赖有序，防御式再排一次
   lines.sort((a, b) => a.time_ms - b.time_ms);
 
-  recordLocalLyricStatus({ outcome: "ok", want: label, got });
+  recordLocalLyricStatus({
+    ...withGot,
+    outcome: "ok",
+    // 走备用路径时说明白，用户才知道这条歌词的曲名跟播放器不一致是正常的
+    detail: byLength ? "按歌手 + 时长吻合采用（歌词自带的曲名与播放器不一致）" : undefined,
+  });
   console.info(
-    `${LOG} 命中 "${label}"（${lines.length} 行，逐字=${keepWords}，offset=${offsetMs}ms）`
+    `${LOG} 命中 "${label}"（${lines.length} 行，逐字=${keepWords}，offset=${offsetMs}ms，` +
+      `${byLength ? "歌手+时长吻合" : "严格匹配"}）`
   );
   // Folia 不给时长（它不播音频，只镜像别的播放器）→ duration 交回调用方已有的来源
   return { lines, duration: null };

@@ -84,6 +84,18 @@ export function isSameTrack(c: Candidate, want: WantInfo): boolean {
   return titleScore(want.title, c.title) >= 0.9 && scoreCandidate(c, want) >= 70;
 }
 
+/**
+ * 歌手是否强匹配（任一位 ≥0.9）。
+ *
+ * 给「曲名对不上、但确实是同一首歌」这条备用身份路径用（见 `playbackSources/folia.ts`
+ * 的 `isLengthCompatible`）。歌词文件自带的标题是**自由文本元数据**，实测会与播放器报的
+ * 曲名不一致（同一首歌的另一种叫法），所以不能只靠曲名 —— 歌手 + 时长同时吻合才可靠。
+ */
+export function isSameArtist(c: Candidate, want: WantInfo): boolean {
+  if (!want.artist) return false;
+  return artistScore(want.artist, c.artists) >= 0.9;
+}
+
 /** 取最高分候选；空列表返回 null（同分时保持接口原顺序） */
 export function pickBest(list: Candidate[], want: WantInfo): Candidate | null {
   let best: Candidate | null = null;
