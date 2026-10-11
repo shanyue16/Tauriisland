@@ -4,13 +4,16 @@ import { fetchMusic } from "../../services/music";
 import { probeLocalLyric } from "../../services/playbackSources/folia";
 import {
   describeControlStatus,
+  describeNowPlayingOutcome,
   describeOutcome,
   describeStageOutcome,
   getControlStatus,
   getLocalLyricStatus,
+  getNowPlayingStatus,
   getStageStatus,
   type ControlStatus,
   type LocalLyricStatus,
+  type NowPlayingStatus,
   type StageStatus,
 } from "../../services/playbackSources/status";
 
@@ -58,10 +61,16 @@ export default function WhitelistSettings() {
   // 所以这里把「取到的是哪首 / 有没有采纳」也显示出来 —— 否则进度不对时无从判断。
   const [stageStatus, setStageStatus] = useState<StageStatus | null>(null);
   const [controlStatus, setControlStatus] = useState<ControlStatus | null>(null);
+  // —— Now Playing（9863）——
+  // 它同时给歌词与进度，但**进度是推算值**：只跟播放/暂停、不跟 seek
+  // （2026-10-11 真机实测：40s / 78 次采样，拖动进度条期间零跳变）。
+  const [npStatus, setNpStatus] = useState<NowPlayingStatus | null>(null);
+  const [npTimeoutDraft, setNpTimeoutDraft] = useState(String(settings.nowPlayingTimeoutMs));
   useEffect(() => {
     const sync = () => {
       setStageStatus(getStageStatus());
       setControlStatus(getControlStatus());
+      setNpStatus(getNowPlayingStatus());
     };
     sync();
     const t = window.setInterval(sync, 1000);
@@ -70,6 +79,9 @@ export default function WhitelistSettings() {
   useEffect(() => {
     setTimeoutDraft(String(settings.localLyricTimeoutMs));
   }, [settings.localLyricTimeoutMs]);
+  useEffect(() => {
+    setNpTimeoutDraft(String(settings.nowPlayingTimeoutMs));
+  }, [settings.nowPlayingTimeoutMs]);
 
   const handleProbe = async () => {
     if (probing) return;
@@ -92,6 +104,15 @@ export default function WhitelistSettings() {
       : settings.localLyricTimeoutMs;
     updateSettings({ localLyricTimeoutMs: clamped });
     setTimeoutDraft(String(clamped));
+  };
+
+  const commitNpTimeout = () => {
+    const v = Number(npTimeoutDraft);
+    const clamped = Number.isFinite(v)
+      ? Math.min(5000, Math.max(300, Math.round(v)))
+      : settings.nowPlayingTimeoutMs;
+    updateSettings({ nowPlayingTimeoutMs: clamped });
+    setNpTimeoutDraft(String(clamped));
   };
 
   const exists = (name: string) =>
@@ -395,7 +416,109 @@ export default function WhitelistSettings() {
         </div>
       </div>
 
-      {/* ⑤ Stage API（Folia 32107）—— 唯一能给出播放进度的本地源 */}
+      {/* ⑤ Now Playing（9863）—— 歌词 + 播放进度 */}
+      <div className="rounded-lg p-4 space-y-3" style={{ background: "var(--surface-1)" }}>
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium">Now Playing（9863）</span>
+          <div
+            className={`switch shrink-0${settings.nowPlayingEnabled ? " active" : ""}`}
+            onClick={() => updateSettings({ nowPlayingEnabled: !settings.nowPlayingEnabled })}
+          />
+        </div>
+        <div className="text-[11px] opacity-55 leading-relaxed">
+          本机第三方程序 Now Playing 的接口。它同时给歌词（含逐字与翻译）与播放进度，
+          歌词排在本地歌词接口之后、网络源之前；它自己已经挑好了匹配度最高的那份歌词。
+          没装或没开时会静默回落，不影响现有行为。
+        </div>
+        <div
+          className="text-[10px] opacity-45 leading-relaxed"
+          style={{ borderLeft: "2px solid var(--island-border)", paddingLeft: 8 }}
+        >
+          注意：它的进度是按播放时钟推算的，只跟播放/暂停，不跟拖动进度条
+          （网易云与全民K歌除外）。所以在别的播放器上拖了进度条，这里的进度会一直偏着，
+          直到暂停/切歌才可能重新对上。
+        </div>
+
+        <div className="space-y-1">
+          <div className="text-[11px] opacity-80">接口地址</div>
+          <input
+            type="text"
+            value={settings.nowPlayingBase}
+            onChange={(e) => updateSettings({ nowPlayingBase: e.target.value })}
+            placeholder="http://127.0.0.1:9863"
+            className="w-full text-[12px] px-3 py-1.5 rounded-md outline-none"
+            style={{
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] opacity-80">请求超时（ms）</span>
+          <input
+            type="number"
+            min={300}
+            max={5000}
+            step={100}
+            value={npTimeoutDraft}
+            onChange={(e) => setNpTimeoutDraft(e.target.value)}
+            onBlur={commitNpTimeout}
+            className="text-[12px] px-2 py-1 rounded-md outline-none"
+            style={{
+              width: 88,
+              background: "var(--input-bg)",
+              border: "1px solid var(--island-border)",
+              color: "var(--island-text)",
+            }}
+          />
+        </div>
+
+        {/* 最近一次取数结论 —— 同样是静默降级链路，这里是唯一的排查窗口 */}
+        <div
+          className="text-[11px] leading-relaxed pt-2 space-y-0.5"
+          style={{ borderTop: "1px solid var(--island-border)" }}
+        >
+          {npStatus ? (
+            <>
+              <div className="opacity-80">
+                最近一次：{describeNowPlayingOutcome(npStatus.outcome)}
+              </div>
+              {npStatus.want && (
+                <div className="opacity-55">
+                  岛上在放：{npStatus.want}
+                  {fmtDur(npStatus.wantDurationMs)}
+                </div>
+              )}
+              <div className="opacity-55">
+                接口在放：{npStatus.got ?? "（读不到）"}
+                {fmtDur(npStatus.gotSpanMs)}
+              </div>
+              {typeof npStatus.positionMs === "number" && (
+                <div className="opacity-55">它的进度：{fmtDur(npStatus.positionMs).trim()}</div>
+              )}
+              {npStatus.outcome === "mismatch" && (
+                <div className="opacity-45">
+                  它报的是另一首歌，所以整份被丢弃了（宁可不显示，也不显示别人的歌词）。
+                </div>
+              )}
+              {npStatus.outcome === "noSong" && (
+                <div className="opacity-45">
+                  服务在跑、但当前没有在放的东西 —— 检查 Now Playing 里选的平台对不对。
+                </div>
+              )}
+              {npStatus.detail && <div className="opacity-45">说明：{npStatus.detail}</div>}
+            </>
+          ) : (
+            <div className="opacity-45">
+              还没有取过数（换一首歌，或确认 Now Playing 已启动、并已选对平台）
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ⑥ Stage API（Folia 32107）—— 带控制能力的本地源 */}
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
