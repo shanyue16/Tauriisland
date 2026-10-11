@@ -46,6 +46,19 @@ import { canScrollableAncestorScroll } from "../utils/scroll";
 // 固定尺寸
 const MINIMAL_H = 56;
 const MEDIUM_H = 74;
+
+/**
+ * 丝线（`AudioWaveLine`）的统一加粗倍率。
+ *
+ * 所有线性动效的 `strokeWidth` 都乘它 —— 那 5 处字面量（0.7 / 0.75 / 0.85 / 0.9 / 1）
+ * 表达的是**层次关系**（哪条该比哪条细），不是绝对值，所以整体加减应该调这一个数，
+ * 而不是去改 5 个字面量（那样很容易把层次改乱）。
+ *
+ * 用户 2026-10-11 要求"稍微加粗一点"：0.3px 级别的改动在低透明度发丝线上根本看不出来，
+ * 所以取 1.35（约 +0.25~0.35px）。`vectorEffect="non-scaling-stroke"` 保证这是**真实像素**，
+ * 不随 viewBox 缩放。
+ */
+const WAVE_THICKNESS_SCALE = 1.35;
 const EXPANDED_W = 530; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
 const EXPANDED_H = 280; // 原 220：日历页上下不再拥挤
 /**
@@ -1113,13 +1126,13 @@ function MinimalContent({
           <div style={{ position: "absolute", left: 0, right: 0, top: "4%", height: "46%" }}>
             <AudioWaveLine
               color={accent} color2={accent2} playing={!!musicData.playing}
-              amplitude={1.05} phase={0.6} thickness={0.85} opacityScale={0.5} mirror={false}
+              amplitude={1.05} phase={0.6} thickness={0.85 * WAVE_THICKNESS_SCALE} opacityScale={0.5} mirror={false}
             />
           </div>
           <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: "46%" }}>
             <AudioWaveLine
               color={accent} color2={accent2} playing={!!musicData.playing}
-              amplitude={0.75} phase={2.4} thickness={0.7} opacityScale={0.36} mirror={false}
+              amplitude={0.75} phase={2.4} thickness={0.7 * WAVE_THICKNESS_SCALE} opacityScale={0.36} mirror={false}
             />
           </div>
         </div>
@@ -1422,19 +1435,19 @@ function MusicDetailView({
         <div style={{ position: "absolute", left: 0, right: 0, top: "4%", height: "30%" }}>
           <AudioWaveLine
             color={accentColor} color2={accentColor2} playing={!!data.playing}
-            amplitude={0.95} phase={0} thickness={0.9} opacityScale={0.55} mirror={false}
+            amplitude={0.95} phase={0} thickness={0.9 * WAVE_THICKNESS_SCALE} opacityScale={0.55} mirror={false}
           />
         </div>
         <div style={{ position: "absolute", left: 0, right: 0, top: "36%", height: "30%" }}>
           <AudioWaveLine
             color={accentColor} color2={accentColor2} playing={!!data.playing}
-            amplitude={1.2} phase={1.9} thickness={0.75} opacityScale={0.42} mirror={false}
+            amplitude={1.2} phase={1.9} thickness={0.75 * WAVE_THICKNESS_SCALE} opacityScale={0.42} mirror={false}
           />
         </div>
         <div style={{ position: "absolute", left: 0, right: 0, top: "68%", height: "30%" }}>
           <AudioWaveLine
             color={accentColor} color2={accentColor2} playing={!!data.playing}
-            amplitude={0.7} phase={3.4} thickness={1} opacityScale={0.34} mirror={false}
+            amplitude={0.7} phase={3.4} thickness={1 * WAVE_THICKNESS_SCALE} opacityScale={0.34} mirror={false}
           />
         </div>
       </div>
