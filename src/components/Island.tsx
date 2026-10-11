@@ -278,12 +278,22 @@ export default function Island() {
       const expandedGeometry = state === "expanded" || state === "maximal" || alertActive;
       // 垂直微调（settings.offsetY）**只作用于悬浮胶囊**：贴边挂角的定义就是贴住屏幕顶边，
       // 它必须忽略这个值（否则"贴边"就不再是贴边了）—— 见设置→位置面板的提示。
+      // 展开几何在窗口"顶部"比紧凑几何多出的、**看不见的**厚度：
+      //   外层留白 SHADOW_PAD(12) + 内层内缩 2 → 3（+1，见 innerStyle 的 innerPad）
+      // 悬浮胶囊下窗口 y 必须减掉它，可见岛体顶边才会四态钉在同一处。
+      // 不减掉就是用户反馈的「悬浮 → 展开时岛体最上边与屏幕上沿出现空隙」：
+      //   岛体顶边 = 窗口 y + 外层留白 + 内层上边内缩，展开时后两项从 (0+2) 变成 (12+3)，
+      //   窗口 y 不变 → 岛体顶边整体下沉 13px（而且是**动画过程中**逐渐沉下去的，
+      //   因为窗口在 280ms 里插值、而 padding 立即跳变）。
+      // 配合 outerStyle / innerStyle 的 inset 过渡（同时长、同曲线）之后：
+      //   islandTop(t) = y(t) + outerInset(t) + innerTop(t) 在整个动画里恒为常数。
+      const expandTopInset = SHADOW_PAD + 1;
       const y =
         settings.style === "docked"
           ? expandedGeometry
             ? -SHADOW_PAD
             : 0
-          : 8 + settings.offsetY;
+          : 8 + settings.offsetY - (expandedGeometry ? expandTopInset : 0);
       let x: number;
       switch (settings.horizontalPosition as HorizontalPosition) {
         case "left":
@@ -899,16 +909,34 @@ export default function Island() {
   // 外层：填满 OS 窗口（展开态四周留出 SHADOW_PAD）
   // ⚠️ 这一层**必须完全透明**：任何背景色/渐变都会在圆角岛之外露出一圈矩形色块，
   //    即用户反复反馈的"长方形黑边"。深色底只能画在内层圆角岛上。
+  // 几何类属性的过渡时长：与窗口形变走同一档（展开级 280ms 基准 × 用户倍率）。
+  // **必须与 animateWindow 同步**：窗口是 JS 逐帧插值的，padding 若瞬间跳变，
+  // 岛体会先缩一下再长大、顶边还会跳 13px。minimal↔medium 不改变这些属性，
+  // 所以不存在"这里该用 hover 档"的情形（那一档只动宽高）。
+  // 减少动态效果时必须**一起**变 0：animateWindow 那边是直接落位的，
+  // 这边若还在过渡 280ms，窗口已经到位而岛体还在慢慢长，两者会脱节。
+  const geoMs = prefersReducedMotion() ? 0 : motionMs("expand", settings.animationSpeed);
+
   const outerStyle: React.CSSProperties = {
     position: "absolute",
-    // 展开态（含提醒）四周留出 SHADOW_PAD，让阴影有空间衰减
+    // 展开态（含提醒）四周留出 SHADOW_PAD，让阴影有空间衰减。
+    // ⚠️ 这一层与 innerStyle 的 top 一起构成「窗口顶边 → 岛体顶边」的距离；
+    //    改这里必须同步 getTargetPos 里的 expandTopInset 补偿，否则顶边会漂。
     inset: isExpandedLayout ? SHADOW_PAD : 0,
     borderRadius: getBorderRadius(size.h),
     overflow: isExpandedLayout ? "visible" : "hidden",
     background: "transparent",
     cursor: "pointer",
-    transition:
-      `border-radius ${motionMs("expand", settings.animationSpeed)}ms var(--ease-out), overflow 0ms`,
+    // overflow 保持 0ms：裁剪态必须**立刻**切（延迟会让越界内容露出来）。
+    // top/right/bottom/left 与窗口形变同时长同曲线，岛体才会连续长大而不是"跳一下"。
+    transition: [
+      `border-radius ${geoMs}ms var(--ease-out)`,
+      `top ${geoMs}ms var(--ease-out)`,
+      `right ${geoMs}ms var(--ease-out)`,
+      `bottom ${geoMs}ms var(--ease-out)`,
+      `left ${geoMs}ms var(--ease-out)`,
+      "overflow 0ms",
+    ].join(", "),
   };
 
   // 内层：岛主体
@@ -965,8 +993,20 @@ export default function Island() {
     // 注意：boxShadow 是画在元素**外部**的，不受自身 overflow 影响，
     // 因此这里改成 hidden 不会吃掉那圈柔和阴影（四态仍统一为圆角+发丝描边+阴影）。
     overflow: "hidden",
-    transition:
-      `border-radius ${motionMs("expand", settings.animationSpeed)}ms var(--ease-out), background-color 180ms ease, border-color 180ms ease`,
+    // ⚠️ border-radius 与**内缩**（top/right/bottom/left）必须与窗口形变同时长同曲线：
+    //    窗口是 JS 逐帧插值的，内缩若瞬间跳变，岛体会先缩一下再长大、顶边还会跳 13px。
+    //    内缩与 outerStyle 的 inset 一起决定岛体大小和顶边位置，三者一致时
+    //    islandTop = y(t) + outerInset(t) + innerTop(t) 在整段动画里恒为常数。
+    //    background-color / border-color 是主题切换，走独立的 180ms ease（与本条无关）。
+    transition: [
+      `border-radius ${geoMs}ms var(--ease-out)`,
+      `top ${geoMs}ms var(--ease-out)`,
+      `right ${geoMs}ms var(--ease-out)`,
+      `bottom ${geoMs}ms var(--ease-out)`,
+      `left ${geoMs}ms var(--ease-out)`,
+      "background-color 180ms ease",
+      "border-color 180ms ease",
+    ].join(", "),
   };
 
   return (

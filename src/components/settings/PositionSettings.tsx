@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSettings } from "../../stores/settings";
 import type { IslandStyle, HorizontalPosition } from "../../types";
 import { THEME_PRESETS } from "../../types";
@@ -7,6 +8,12 @@ import { THEME_PRESETS } from "../../types";
  *
  * 这里放的都是"岛摆在桌面哪儿"的设定：形态（悬浮胶囊 / 贴边挂角）、水平基准位置，
  * 以及在基准之上的左右/上下微调。外观页保留与位置无关的项（主题、圆角、透明度、宽度）。
+ *
+ * ⚠️ 两个微调滑块**拖动期间只改本地草稿，松开才写进设置**：
+ *    偏移一变就会触发岛的窗口位移动画（280ms 缓动 + 每帧一次 setPosition）。
+ *    拖动时每秒变十几次 → 窗口在追一个持续移动的目标，每次都被重新计时/重定向，
+ *    屏幕上就是用户反馈的"抽搐"。改成松手才提交后，拖动纯粹是本地反馈，
+ *    窗口只动一次。顺带把落盘次数从"一次拖动几十次"降到一次。
  */
 
 const STYLES: { key: IslandStyle; label: string; hint: string }[] = [
@@ -25,8 +32,41 @@ export default function PositionSettings() {
   const theme = THEME_PRESETS[settings.theme];
   const docked = settings.style === "docked";
 
-  /** 把位置相关的三项一起复位（形态不动，避免用户只想复位偏移却换了形态） */
-  const resetOffsets = () => updateSettings({ offsetX: 0, offsetY: 0 });
+  // 拖动中的草稿值（null = 没有未提交的改动，显示 settings 里的真值）
+  const [draftX, setDraftX] = useState<number | null>(null);
+  const [draftY, setDraftY] = useState<number | null>(null);
+
+  /**
+   * 提交草稿。绑在 pointerup / pointercancel / keyup / blur 上：
+   *  - pointerup：鼠标/触摸拖动松手（range 输入框会隐式捕获指针，指针移出输入框也能收到）
+   *  - keyup：键盘方向键调值
+   *  - blur：兜底，万一 pointerup 丢了（比如在窗口外松开）
+   */
+  const commitOffsets = () => {
+    const patch: { offsetX?: number; offsetY?: number } = {};
+    if (draftX !== null) patch.offsetX = draftX;
+    if (draftY !== null) patch.offsetY = draftY;
+    if (patch.offsetX !== undefined || patch.offsetY !== undefined) updateSettings(patch);
+    setDraftX(null);
+    setDraftY(null);
+  };
+
+  const holdProps = {
+    onPointerUp: commitOffsets,
+    onPointerCancel: commitOffsets,
+    onKeyUp: commitOffsets,
+    onBlur: commitOffsets,
+  };
+
+  const shownX = draftX ?? settings.offsetX;
+  const shownY = draftY ?? settings.offsetY;
+
+  /** 把位置相关的两项一起复位；顺手清掉未提交的草稿，否则松手时会把旧草稿写回去 */
+  const resetOffsets = () => {
+    setDraftX(null);
+    setDraftY(null);
+    updateSettings({ offsetX: 0, offsetY: 0 });
+  };
 
   return (
     <div className="space-y-5">
@@ -85,7 +125,7 @@ export default function PositionSettings() {
         <div className="flex justify-between text-[11px] mb-1.5">
           <span className="opacity-60">水平微调</span>
           <span className="tabular-nums">
-            {settings.offsetX > 0 ? `+${settings.offsetX}` : settings.offsetX}px
+            {shownX > 0 ? `+${shownX}` : shownX}px
           </span>
         </div>
         <input
@@ -93,8 +133,9 @@ export default function PositionSettings() {
           min={-200}
           max={200}
           step={1}
-          value={settings.offsetX}
-          onChange={(e) => updateSettings({ offsetX: Number(e.target.value) })}
+          value={shownX}
+          onChange={(e) => setDraftX(Number(e.target.value))}
+          {...holdProps}
         />
         <div className="flex justify-between text-[10px] mt-0.5 opacity-40">
           <span>左 200px</span>
@@ -106,16 +147,17 @@ export default function PositionSettings() {
       <div>
         <div className="flex justify-between text-[11px] mb-1.5">
           <span className="opacity-60">垂直微调</span>
-          <span className="tabular-nums">{settings.offsetY}px</span>
+          <span className="tabular-nums">{shownY}px</span>
         </div>
         <input
           type="range"
           min={0}
           max={200}
           step={1}
-          value={settings.offsetY}
+          value={shownY}
           disabled={docked}
-          onChange={(e) => updateSettings({ offsetY: Number(e.target.value) })}
+          onChange={(e) => setDraftY(Number(e.target.value))}
+          {...holdProps}
           style={docked ? { opacity: 0.35 } : undefined}
         />
         {docked ? (
