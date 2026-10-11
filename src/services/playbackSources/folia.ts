@@ -56,27 +56,43 @@ const PLACEHOLDER = /^[.．。…·\s]+$/;
 const SEPARATORS = [" - ", " – ", " — ", "-", "–", "—", "－"];
 
 /**
- * 把 `"<曲名> - <歌手1>/<歌手2>"` 解析成候选。
+ * 把标题卡文本解析成候选 —— **两种先后顺序都产出**。
  *
- * 每个分隔符的首尾两个位置各给一个切点：曲名自己可能含分隔符，
- * 由调用方用 `isSameTrack` / `isSameArtist` 挑出真正吻合的那个（都不吻合就整份丢弃）。
+ * 实测过三种写法，全都要认：
+ *   `"曲名 - 歌手"`（有空格）、`"曲名-歌手"`（无空格）、
+ *   **`"歌手 - 曲名"`（顺序颠倒！实测 `许嵩、黄龄 - 惊鸿一面`）**。
+ * 少认一种就会把整份歌词判成「没有身份」而丢弃。
+ *
+ * 宽松解析是安全的：切错了只会产出对不上身份的候选，被后面的门禁拒掉；
+ * 真正的风险（把真实歌词行误当标题卡丢掉）由「歌手必须吻合」那一步兜住。
  */
 function identityCandidates(text: string): Candidate[] {
   const t = text.trim();
   if (!t) return [];
   const out: Candidate[] = [];
+  const seen = new Set<string>();
+  const push = (title: string, artists: string[]) => {
+    if (!title || artists.length === 0) return;
+    const key = `${title}|${artists.join("/")}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ id: "lines[0]", title, artists });
+  };
+
   for (const sep of SEPARATORS) {
     for (const idx of [t.indexOf(sep), t.lastIndexOf(sep)]) {
       if (idx <= 0) continue;
-      const title = t.slice(0, idx).trim();
-      if (!title || out.some((c) => c.title === title)) continue;
-      const artists = t
+      const left = t.slice(0, idx).trim();
+      const right = t
         .slice(idx + sep.length)
         .split("/")
         .map((s) => s.trim())
         .filter(Boolean);
-      if (artists.length === 0) continue;
-      out.push({ id: "lines[0]", title, artists });
+      if (!left || right.length === 0) continue;
+      // 正序：<曲名> - <歌手>
+      push(left, right);
+      // 倒序：<歌手> - <曲名>（把右侧整体当曲名、左侧当歌手）
+      push(right.join("/"), [left]);
     }
   }
   return out;
@@ -257,12 +273,13 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
 
   // 路径 A（严格）：曲名 + 歌手（+ 时长）都对得上
   const strictCandidate = selfCandidates.some((c) => isSameTrack(c, want));
-  // 路径 A 的兜底：分隔符写法没法穷举，解析不出结构时改为直接看
-  // 「lines[0] 这段文本是否同时提到我们的曲名与歌手」——
-  // 实测 `如今的生活能不能放过我-姚文乐`（破折号不带空格）就是靠这一步救回来的。
-  const mentioned =
-    selfCandidates.length === 0 &&
-    textMentionsTrack(str(rawLines[0]?.text), want);
+  // 路径 A 的兜底：**独立信号，不依赖解析结果**。
+  // 分隔符、空格、`谁在前` 都列不全，所以只要 lines[0] 这段文本同时提到了
+  // 我们的曲名与歌手就算数 —— 实测 `许嵩、黄龄 - 惊鸿一面`（顺序颠倒）
+  // 就是靠这一步救回来的（解析出的候选顺序相反，两条结构化判据都不成立）。
+  // 只在没有官方 title/artist 时才用：有官方字段就以它为准，
+  // 否则「歌词行里出现歌名」这种正常情况会造成误判。
+  const mentioned = !topTitle && textMentionsTrack(str(rawLines[0]?.text), want);
   const strict = strictCandidate || mentioned;
   // 路径 B（歌手 + 时长）：曲名对不上，但歌手强匹配**且**歌词时间跨度与曲长相容。
   // 实测案例：歌词自带的标题是「还在假装」，播放器与 Folia 放的却是「假装放下」——
