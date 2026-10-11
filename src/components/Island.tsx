@@ -19,6 +19,7 @@ import { useCoverAccent } from "../hooks/useCoverAccent";
 import { MOTION, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
+import { useScrub, isPointerHeld } from "../hooks/useScrub";
 import { controlPlayback } from "../services/playbackControl";
 import { isStageControlActive } from "../services/playbackSources/stage";
 import { getCurrentLyric } from "../services/lyrics";
@@ -44,7 +45,7 @@ import { canScrollableAncestorScroll } from "../utils/scroll";
 
 // 固定尺寸
 const MINIMAL_H = 56;
-const MEDIUM_H = 74;
+const MEDIUM_H = 80;
 const EXPANDED_W = 530; // 原 420：日历页左右分栏 + 更大的「休/班」徽标需要更宽的画布
 const EXPANDED_H = 280; // 原 220：日历页上下不再拥挤
 /**
@@ -460,6 +461,9 @@ export default function Island() {
   const handleMouseLeave = useCallback(() => {
     clearTimers();
     if (alertActive) return; // 提醒显示期间不自动收起
+    // 正在拖进度条时不收起：拖动中指针很容易短暂移出岛体，
+    // 一旦收起，悬浮态的拖动就会在半路断掉（见 hooks/useScrub.ts 的 isPointerHeld）。
+    if (isPointerHeld()) return;
     if (state === "maximal") {
       collapseTimerRef.current = window.setTimeout(() => {
         setState("medium");
@@ -1091,18 +1095,38 @@ function MinimalContent({
   const hasMusic = showsMusic(musicData);
   // 封面光晕色：与展开态/悬浮态同一来源（= 进度条/丝线用的那份封面主色）。
   // hook 必须放在下面的条件 return 之前（Hooks 规则）。
-  const { accent } = useCoverAccent(musicData?.cover_url ?? null);
+  const { accent, accent2 } = useCoverAccent(musicData?.cover_url ?? null);
 
   // —— 有音乐时：封面 + 右侧两行（[歌名][歌手] / 当前歌词）+ 时间 ——
   if (hasMusic) {
     const miniLyric = getCurrentLyric(lyrics, (musicData.position || 0) * 1000);
     return (
-      <div className="w-full h-full flex items-center gap-2.5 px-4" style={{ color }}>
+      <div className="w-full h-full relative flex items-center gap-2.5 px-4" style={{ color }}>
+        {/* 背景丝线：与展开态同一套「音频可视化」语言（用户要求失焦态也加）。
+            绝对铺满 + pointerEvents:none；下面三块内容各自 relative + zIndex:1 压在上面
+            —— 带 z-index 的定位元素会盖住静态内容，所以那三个 zIndex 不能省。
+            岛体本身 overflow:hidden，两端的圆角会自然裁掉越界部分。 */}
+        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
+          <div style={{ position: "absolute", left: 0, right: 0, top: "4%", height: "46%" }}>
+            <AudioWaveLine
+              color={accent} color2={accent2} playing={!!musicData.playing}
+              amplitude={1.05} phase={0.6} thickness={0.85} opacityScale={0.5} mirror={false}
+            />
+          </div>
+          <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: "46%" }}>
+            <AudioWaveLine
+              color={accent} color2={accent2} playing={!!musicData.playing}
+              amplitude={0.75} phase={2.4} thickness={0.7} opacityScale={0.36} mirror={false}
+            />
+          </div>
+        </div>
+
         {/* 真实封面 (无则 EQ 占位) */}
         <div
           className="relative shrink-0 rounded-md overflow-hidden flex items-center justify-center"
           style={{
             width: 28, height: 28,
+            zIndex: 1,
             background: musicData.cover_url ? "transparent" : "linear-gradient(135deg, #f472b6, #60a5fa)",
             // 封面光晕（用户要求三态都加）：颜色 = 封面主色 = 悬浮/展开态进度条同源
             boxShadow: `0 0 0 1px ${accent}40, 0 0 12px 3px ${accent}59, 0 2px 6px rgba(0,0,0,0.3)`,
@@ -1129,7 +1153,7 @@ function MinimalContent({
 
         {/* 右侧两行（用户指定）：第一行 [歌名][歌手] 横排，第二行 当前歌词。
             没有歌词时第二行退化成播放状态，保证两行骨架不变。 */}
-        <div className="flex flex-col flex-1 min-w-0 leading-tight gap-[1px]">
+        <div className="relative flex flex-col flex-1 min-w-0 leading-tight gap-[1px]" style={{ zIndex: 1 }}>
           <div className="flex items-baseline gap-[6px] min-w-0">
             <span className="text-[11px] font-medium truncate">{musicData.title || "未知曲目"}</span>
             {musicData.artist && (
@@ -1148,8 +1172,8 @@ function MinimalContent({
 
         {/* 时间 */}
         <span
-          className="text-[11px] font-medium tabular-nums shrink-0"
-          style={{ color: muted }}
+          className="relative text-[11px] font-medium tabular-nums shrink-0"
+          style={{ color: muted, zIndex: 1 }}
         >
           {hh}:{mm}
         </span>
@@ -1324,30 +1348,16 @@ function MusicDetailView({
   // 因此"封面周围的光晕颜色 = 进度条颜色"必定一致。
   const { accent: accentColor, accent2: accentColor2 } = useCoverAccent(data?.cover_url ?? null);
 
-  // —— 拖动跳转（seek）的 hook ——
-  // ⚠️ 必须放在下面 `if (!data?.active) return` **之前**：那个提前 return 会跳过它后面的
-  // 所有 hook，曲目一旦变成"无活跃音乐"，前后两次渲染的 hook 数量就不一致，
+  // 拖动跳转（seek）：逻辑全在 useScrub 里，与悬浮态共用同一份（见 hooks/useScrub.ts）。
+  // ⚠️ hook 必须放在下面 `if (!data?.active) return` **之前**：那个提前 return 会跳过
+  // 它后面的所有 hook，曲目一旦变成"无活跃音乐"，前后两次渲染的 hook 数量就不一致，
   // 直接抛 "Rendered fewer hooks than expected"。tsc 抓不到这类错误，只能靠摆位置。
-  // 所以 hook 与计算逻辑在这里被拆开摆：hook 在此，其余在提前 return 之后。
-  const barRef = useRef<HTMLDivElement | null>(null);
-  const draggingRef = useRef(false);
-  const [scrubSec, setScrubSec] = useState<number | null>(null);
-  const scrubDeadlineRef = useRef(0);
-
-  // 真实位置跟上（或超时）后，把显示权交还给 data.position。
-  // 定时器按**绝对截止时间**算，所以每一拍重新布置也不会把它越推越晚；
-  // 超时兜底是为了「seek 失败」时不会永久显示一个假位置。
-  useEffect(() => {
-    if (scrubSec === null || draggingRef.current) return;
-    const live = data?.position || 0;
-    if (Math.abs(live - scrubSec) < 2.5) {
-      setScrubSec(null);
-      return;
-    }
-    const remain = Math.max(0, scrubDeadlineRef.current - Date.now());
-    const t = window.setTimeout(() => setScrubSec(null), remain);
-    return () => window.clearTimeout(t);
-  }, [data?.timestamp, data?.position, scrubSec]);
+  const scrub = useScrub({
+    durationSec: data?.duration ?? 0,
+    positionSec: data?.position ?? 0,
+    tick: data?.timestamp ?? 0,
+    enabled: isStageControlActive(),
+  });
 
   if (!data?.active) {
     return (
@@ -1379,51 +1389,14 @@ function MusicDetailView({
   // —— 拖动跳转（seek）——
   // 只有 Stage API 支持 seek（SMTC 侧没有这条命令），所以没开启时条完全不可交互，
   // 连光标都不变 —— 不给出一个按不动的 affordance。
-  // （上面那个 `scrubSec` 的 state/ref 与释放 effect 都在提前 return 之前，
-  //   此处只算派生量与事件处理。）
   const seekable = hasRealDuration && isStageControlActive();
 
-  const posSec = scrubSec ?? (data.position || 0);
+  const posSec = scrub.scrubSec ?? (data.position || 0);
   const progress = hasRealDuration ? Math.min((posSec / data.duration) * 100, 100) : 0;
   // 色条与游标圆点共用同一个百分比：没有真实时长时给 2% 的"起步宽度"，
   // 让 0:00 也能看出这是一条进度轨道（原实现只给色条、游标会停在 0 处）。
   const progressPct = Math.min(Math.max(progress, hasRealDuration ? 0 : 2), 100);
-  const scrubbing = scrubSec !== null;
-
-  const secFromPointer = (clientX: number): number => {
-    const el = barRef.current;
-    if (!el || !hasRealDuration) return 0;
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0) return 0;
-    const ratio = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
-    return ratio * data.duration;
-  };
-
-  const onSeekDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!seekable) return;
-    draggingRef.current = true;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setScrubSec(secFromPointer(e.clientX));
-  };
-  const onSeekMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingRef.current) return;
-    setScrubSec(secFromPointer(e.clientX));
-  };
-  /** 松手才真正跳 —— 拖动过程中只做本地预览，避免每移动一像素就打一次接口 */
-  const onSeekUp = async (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingRef.current) return;
-    const target = secFromPointer(e.clientX);
-    // 顺序要紧：先把「本地接管」的截止时间写好，再放开 dragging，
-    // 否则下面的释放 effect 会在同一帧里立刻把 scrubSec 清掉。
-    scrubDeadlineRef.current = Date.now() + 2500;
-    draggingRef.current = false;
-    setScrubSec(target);
-    await controlPlayback("seek", target);
-  };
-  const onSeekCancel = () => {
-    draggingRef.current = false;
-    setScrubSec(null);
-  };
+  const scrubbing = scrub.scrubbing;
 
   // 播放控制：默认走系统媒体接口（SMTC）；Stage API 核对通过时改走它。
   // 路由与回退规则见 services/playbackControl.ts —— 这里只报语义动作，不关心走哪条路。
@@ -1600,14 +1573,11 @@ function MusicDetailView({
                 上下各给 6px 透明内边距把可点/可拖范围撑到 17px，
                 再用等量负外边距抵消，视觉位置与原实现逐像素一致。 */}
             <div
-              ref={barRef}
+              ref={scrub.barRef}
               className={seekable ? "cursor-pointer" : undefined}
               data-tip={seekable ? "点击或拖动可跳转" : undefined}
               style={{ padding: "6px 0", margin: "-6px 0", touchAction: "none" }}
-              onPointerDown={onSeekDown}
-              onPointerMove={onSeekMove}
-              onPointerUp={onSeekUp}
-              onPointerCancel={onSeekCancel}
+              {...scrub.handlers}
             >
               {/* 进度条：轨道与已播段都带封面同色光晕（与丝线、封面、播放键同源） */}
               <div

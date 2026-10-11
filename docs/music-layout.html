@@ -38,7 +38,7 @@
   --btn-size:38px;           /* 播放按钮直径 */
   --wave-h:38px;             /* 折线（声音地板）高度 */
 
-  /* --- 悬浮态（74 高 · 圆角 24） --- */
+  /* --- 悬浮态（80 高 · 圆角 24） --- */
   --pad-xm:18px;             /* 左侧内边距 */
   --pad-xm-r:26px;           /* 右侧：给 right:8 的竖排页码指示器留的通道 */
   --fs-m-time:34px;
@@ -163,10 +163,11 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
   box-shadow:0 0 6px var(--accent-glow,rgba(255,255,255,.45))}
 
 /* ============================================================================
-   ④  悬浮态 —— 340×74（默认值已从 300 加宽到 340，给单句歌词留位置），圆角 24
+   ④  悬浮态 —— 340×80（原本 300×74；加宽是为了放单句歌词，加高是为了放下控件行 +
+      14px 的进度条命中区），圆角 24
    音乐页四行：歌名+时间 / 歌手 / 单句歌词 / 进度条（对应 MusicPage.tsx）
    ============================================================================ */
-.medium{width:300px;height:74px}
+.medium{width:340px;height:80px}
 .medium .glass{inset:2px}
 .medium .page{position:absolute;inset:0;padding:4px var(--pad-xm-r) 4px var(--pad-xm);
   display:flex;align-items:center;gap:10px}
@@ -190,6 +191,14 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
   box-shadow:0 0 6px 1px color-mix(in srgb,var(--accent) 25%,transparent)}
 .mm-fill{height:100%;width:38%;border-radius:99px;
   background:linear-gradient(90deg,var(--accent),var(--accent2))}
+/* 播放控件行（上一首 / 播放 / 下一首）—— 与展开态同一套语义动作 */
+.mm-ctrl{display:flex;align-items:center;gap:6px}
+.mm-btn{width:18px;height:18px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  color:var(--theme-text);opacity:.9;font-size:11px;line-height:1}
+.mm-btn.wide{width:24px}
+/* 进度条命中区：条本体只有 3px，靠这一整行撑到 14px 才拖得准。
+   ⚠️ 它必须是控件的**兄弟行**（控件在上、条在下），这样命中区不会抢控件的点击。 */
+.mm-hit{height:14px;display:flex;align-items:center;cursor:pointer}
 /* 竖排页码指示器：right:8，垂直居中 */
 .dots-v{position:absolute;right:8px;top:0;bottom:0;display:flex;flex-direction:column;
   justify-content:center;align-items:center;gap:4px}
@@ -215,6 +224,17 @@ body[data-lyr="3"] .mu-lyrics .ly:nth-child(5){display:none}
 .mi-info{display:flex;flex-direction:column;flex:1;min-width:0;gap:1px;line-height:1.2}
 .mi-row1{display:flex;align-items:baseline;gap:6px;min-width:0}
 .mi-ly{font-size:9.5px;color:var(--theme-muted);opacity:.95;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 背景丝线（失焦态也有，与展开态同源的音频可视化）。绝对铺满 + 不吃事件；
+   下面三块内容各自 position:relative + z-index:1 压在它上面（定位元素带 z-index
+   会盖住静态内容，所以那个 z-index 不能省）。 */
+.mi-bg{position:absolute;inset:0;z-index:0;pointer-events:none}
+.mi-bg .band{position:absolute;left:0;right:0;height:46%;display:flex;align-items:center}
+.mi-bg .band.a{top:4%}
+.mi-bg .band.b{top:50%}
+.mi-bg svg{width:100%;height:100%;display:block}
+.minimal .page > .mi-cover,
+.minimal .page > .mi-info,
+.minimal .page > .mi-tm{position:relative;z-index:1}
 
 /* ============================================================================
    ⑥  调参面板（浮在右上角）
@@ -248,7 +268,7 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
 
 <h1>Tauriisland · 音乐页三态布局</h1>
 <div class="hint">
-  三块都是<b>真实尺寸</b>（530×280 / 300×74 / 320×56），改右上角滑块即时生效 —— 改完把面板底部的数值贴给我，我照抄进代码。<br>
+  三块都是<b>真实尺寸</b>（530×280 / 340×80 / 320×56），改右上角滑块即时生效 —— 改完把面板底部的数值贴给我，我照抄进代码。<br>
   对照代码：展开态 <code>src/components/Island.tsx · MusicDetailView</code>；悬浮态 <code>src/pages/MusicPage.tsx</code>；
   失焦态 <code>Island.tsx · MinimalContent</code>。想直接改文件的话，改 <code>:root</code> 里带注释的那段变量即可。
 </div>
@@ -321,7 +341,7 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
 
   <!-- ===== 悬浮态（音乐页：四行，含新增的单句歌词） ===== -->
   <div class="cell">
-    <div class="cap"><b>悬浮态 · 音乐页</b>　300 × 74 · 圆角 24 · 右侧 26px 是指示器通道（不放歌词）</div>
+    <div class="cap"><b>悬浮态 · 音乐页</b>　340 × 80 · 圆角 24 · 右侧 26px 是指示器通道（不放歌词）</div>
     <div class="island medium">
       <div class="glass"></div>
       <div class="page">
@@ -332,7 +352,13 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
             <span class="mm-time tnum">1:42/5:12</span>
           </div>
           <div class="mm-artist">买辣椒也用券</div>
-          <div class="mm-track"><div class="mm-fill"></div></div>
+          <!-- 控件行在进度条**上方**：命中区必须比 3px 的条高得多，放在最下面才不会抢控件的点击 -->
+          <div class="mm-ctrl">
+            <span class="mm-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></span>
+            <span class="mm-btn wide"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+            <span class="mm-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></span>
+          </div>
+          <div class="mm-hit"><div class="mm-track"><div class="mm-fill"></div></div></div>
         </div>
         <div class="dots-v"><i class="on"></i><i></i><i></i></div>
       </div>
@@ -345,6 +371,11 @@ pre#dump{margin-top:10px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255
     <div class="island minimal">
       <div class="glass"></div>
       <div class="page">
+        <!-- 背景丝线（两段，颜色取自封面主色，与展开态同源） -->
+        <div class="mi-bg">
+          <div class="band a"><svg viewBox="0 0 320 24" preserveAspectRatio="none"><polyline points="0,13 20,7 40,18 60,9 80,15 100,6 120,19 140,11 160,14 180,7 200,17 220,9 240,16 260,6 280,18 300,11 320,14" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".5"/></svg></div>
+          <div class="band b"><svg viewBox="0 0 320 24" preserveAspectRatio="none"><polyline points="0,11 20,16 40,8 60,14 80,6 100,17 120,10 140,15 160,7 180,13 200,18 220,8 240,14 260,10 280,16 300,7 320,12" fill="none" stroke="var(--accent2)" stroke-width=".8" opacity=".36"/></svg></div>
+        </div>
         <div class="mi-cover"></div>
         <div class="mi-info">
           <div class="mi-row1">
