@@ -20,6 +20,7 @@ import { MOTION, easeOut, motionFactor, motionMs, prefersReducedMotion } from ".
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { controlPlayback } from "../services/playbackControl";
+import { isStageControlActive } from "../services/playbackSources/stage";
 import { getCurrentLyric } from "../services/lyrics";
 import { getWeatherIcon } from "./Icons";
 import type { WeatherData } from "../types/weather";
@@ -1323,6 +1324,31 @@ function MusicDetailView({
   // 因此"封面周围的光晕颜色 = 进度条颜色"必定一致。
   const { accent: accentColor, accent2: accentColor2 } = useCoverAccent(data?.cover_url ?? null);
 
+  // —— 拖动跳转（seek）的 hook ——
+  // ⚠️ 必须放在下面 `if (!data?.active) return` **之前**：那个提前 return 会跳过它后面的
+  // 所有 hook，曲目一旦变成"无活跃音乐"，前后两次渲染的 hook 数量就不一致，
+  // 直接抛 "Rendered fewer hooks than expected"。tsc 抓不到这类错误，只能靠摆位置。
+  // 所以 hook 与计算逻辑在这里被拆开摆：hook 在此，其余在提前 return 之后。
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  const [scrubSec, setScrubSec] = useState<number | null>(null);
+  const scrubDeadlineRef = useRef(0);
+
+  // 真实位置跟上（或超时）后，把显示权交还给 data.position。
+  // 定时器按**绝对截止时间**算，所以每一拍重新布置也不会把它越推越晚；
+  // 超时兜底是为了「seek 失败」时不会永久显示一个假位置。
+  useEffect(() => {
+    if (scrubSec === null || draggingRef.current) return;
+    const live = data?.position || 0;
+    if (Math.abs(live - scrubSec) < 2.5) {
+      setScrubSec(null);
+      return;
+    }
+    const remain = Math.max(0, scrubDeadlineRef.current - Date.now());
+    const t = window.setTimeout(() => setScrubSec(null), remain);
+    return () => window.clearTimeout(t);
+  }, [data?.timestamp, data?.position, scrubSec]);
+
   if (!data?.active) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-[18px] py-[16px]" style={{ color }}>
@@ -1349,12 +1375,55 @@ function MusicDetailView({
 
   // timeline 为 0 时用模拟进度；duration 也为 0 时不显示百分比
   const hasRealDuration = data.duration > 0;
-  const progress = hasRealDuration
-    ? Math.min((data.position / data.duration) * 100, 100)
-    : 0;
+
+  // —— 拖动跳转（seek）——
+  // 只有 Stage API 支持 seek（SMTC 侧没有这条命令），所以没开启时条完全不可交互，
+  // 连光标都不变 —— 不给出一个按不动的 affordance。
+  // （上面那个 `scrubSec` 的 state/ref 与释放 effect 都在提前 return 之前，
+  //   此处只算派生量与事件处理。）
+  const seekable = hasRealDuration && isStageControlActive();
+
+  const posSec = scrubSec ?? (data.position || 0);
+  const progress = hasRealDuration ? Math.min((posSec / data.duration) * 100, 100) : 0;
   // 色条与游标圆点共用同一个百分比：没有真实时长时给 2% 的"起步宽度"，
   // 让 0:00 也能看出这是一条进度轨道（原实现只给色条、游标会停在 0 处）。
   const progressPct = Math.min(Math.max(progress, hasRealDuration ? 0 : 2), 100);
+  const scrubbing = scrubSec !== null;
+
+  const secFromPointer = (clientX: number): number => {
+    const el = barRef.current;
+    if (!el || !hasRealDuration) return 0;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0) return 0;
+    const ratio = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
+    return ratio * data.duration;
+  };
+
+  const onSeekDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekable) return;
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setScrubSec(secFromPointer(e.clientX));
+  };
+  const onSeekMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    setScrubSec(secFromPointer(e.clientX));
+  };
+  /** 松手才真正跳 —— 拖动过程中只做本地预览，避免每移动一像素就打一次接口 */
+  const onSeekUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    const target = secFromPointer(e.clientX);
+    // 顺序要紧：先把「本地接管」的截止时间写好，再放开 dragging，
+    // 否则下面的释放 effect 会在同一帧里立刻把 scrubSec 清掉。
+    scrubDeadlineRef.current = Date.now() + 2500;
+    draggingRef.current = false;
+    setScrubSec(target);
+    await controlPlayback("seek", target);
+  };
+  const onSeekCancel = () => {
+    draggingRef.current = false;
+    setScrubSec(null);
+  };
 
   // 播放控制：默认走系统媒体接口（SMTC）；Stage API 核对通过时改走它。
   // 路由与回退规则见 services/playbackControl.ts —— 这里只报语义动作，不关心走哪条路。
@@ -1527,40 +1596,55 @@ function MusicDetailView({
 
           {/* 进度条 + 时间：时间紧贴条下（5px），"现在到哪了"一眼可读 */}
           <div className="relative mt-[12px]" style={{ zIndex: 1 }}>
-            {/* 进度条：轨道与已播段都带封面同色光晕（与丝线、封面、播放键同源） */}
+            {/* 命中区：条本体只有 5px 高，直接拿它当目标根本点不准 ——
+                上下各给 6px 透明内边距把可点/可拖范围撑到 17px，
+                再用等量负外边距抵消，视觉位置与原实现逐像素一致。 */}
             <div
-              className="w-full h-[5px] rounded-full relative"
-              style={{ background: "var(--slider-track)", boxShadow: `0 0 10px 1px ${accentColor}40` }}
+              ref={barRef}
+              className={seekable ? "cursor-pointer" : undefined}
+              data-tip={seekable ? "点击或拖动可跳转" : undefined}
+              style={{ padding: "6px 0", margin: "-6px 0", touchAction: "none" }}
+              onPointerDown={onSeekDown}
+              onPointerMove={onSeekMove}
+              onPointerUp={onSeekUp}
+              onPointerCancel={onSeekCancel}
             >
+              {/* 进度条：轨道与已播段都带封面同色光晕（与丝线、封面、播放键同源） */}
               <div
-                className="absolute left-0 top-0 bottom-0 rounded-full"
-                style={{
-                  width: `${progressPct}%`,
-                  background: `linear-gradient(90deg, ${accentColor}, ${accentColor2})`,
-                  boxShadow: `0 0 8px ${accentColor}80`,
-                  transition: "width 0.3s linear",
-                }}
-              />
-              <div
-                className="absolute rounded-full"
-                style={{
-                  left: `${progressPct}%`,
-                  top: "50%",
-                  width: 9,
-                  height: 9,
-                  marginLeft: -4.5,
-                  marginTop: -4.5,
-                  background: "#ffffff",
-                  boxShadow: "0 0 6px rgba(255,255,255,0.5)",
-                  transition: "left 0.3s linear",
-                }}
-              />
+                className="w-full h-[5px] rounded-full relative"
+                style={{ background: "var(--slider-track)", boxShadow: `0 0 10px 1px ${accentColor}40` }}
+              >
+                <div
+                  className="absolute left-0 top-0 bottom-0 rounded-full"
+                  style={{
+                    width: `${progressPct}%`,
+                    background: `linear-gradient(90deg, ${accentColor}, ${accentColor2})`,
+                    boxShadow: `0 0 8px ${accentColor}80`,
+                    // 拖动中要跟手，不能有过渡（否则游标追不上指针）
+                    transition: scrubbing ? "none" : "width 0.3s linear",
+                  }}
+                />
+                <div
+                  className="absolute rounded-full"
+                  style={{
+                    left: `${progressPct}%`,
+                    top: "50%",
+                    width: 9,
+                    height: 9,
+                    marginLeft: -4.5,
+                    marginTop: -4.5,
+                    background: "#ffffff",
+                    boxShadow: "0 0 6px rgba(255,255,255,0.5)",
+                    transition: scrubbing ? "none" : "left 0.3s linear",
+                  }}
+                />
+              </div>
             </div>
             <div
               className="flex justify-between mt-[5px]"
               style={{ fontSize: 10.5, color: muted, fontVariantNumeric: "tabular-nums" }}
             >
-              <span>{formatTime(data.position)}</span>
+              <span>{formatTime(posSec)}</span>
               <span>{hasRealDuration ? formatTime(data.duration) : "—:—"}</span>
             </div>
           </div>

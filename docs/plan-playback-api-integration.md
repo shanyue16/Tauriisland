@@ -349,8 +349,8 @@ interface StagePlayerControlRequest {
   - 4xx（动作不支持 / 参数非法）→ 指令**确定没生效** → 安全回退 SMTC
   - 5xx / 超时 / 网络错 → **结果未知** → **不回退**。否则会冒"双动作"的险
     （pause 其实成功了但响应丢了，再发一次 SMTC `toggle` 反而把它恢复播放）
-- **`seek` 只有 Stage 支持**（SMTC 侧没有 seek 命令）。路由层已实现，
-  **但 UI 目前没有任何 seek 入口**（进度条不可点）—— 要不要加是 UI 决定，没有擅自做。
+- **`seek` 只有 Stage 支持**（SMTC 侧没有 seek 命令）。2026-10-11 用户拍板加上入口，
+  展开态进度条现在可点可拖（见 §13）。
 - 调用方（`Island.tsx` 的三个按钮）只报**语义动作**（`toggle`/`prev`/`next`），
   不关心走哪条路；这与已有的 `fetchLyricsMulti` 只关心"拿到歌词"是同一个思路。
 
@@ -359,4 +359,40 @@ interface StagePlayerControlRequest {
 「点的是哪条路」记进 `status.ts` 的 `ControlStatus`，设置页 Stage 那一段会显示
 `上一次控制：toggle → Stage API（成功）` 之类。**这是"按了没反应"时唯一能分清原因的地方**
 （Stage 拒了？SMTC 没生效？两条都没走？），与之前给歌词链路配诊断旁路是同一个理由。
+
+---
+
+## 13. 拖动跳转（seek UI，2026-10-11 用户拍板）
+
+展开态音乐页的进度条现在**可点可拖**。三处实现细节都是踩过才知道的：
+
+**① 命中区必须撑高，不能拿 5px 的条当目标。**
+条本体只有 5px，直接挂在它上面基本点不准。做法：外层容器 `padding: 6px 0` 把可点/可拖
+范围撑到 **17px**，再用等量 `margin: -6px 0` 抵消 —— 视觉位置与原实现**逐像素一致**。
+`getBoundingClientRect()` 因此量到的是带内边距的盒子，但水平方向没有内边距，
+所以 `clientX → 比例` 的映射不受影响。
+
+**② 拖动过程只做本地预览，松手才发请求。**
+拖动中每一像素都发 `POST /stage/player/control` 显然不行。所以 `pointerdown/move` 只更新
+本地 `scrubSec`，`pointerup` 才 `controlPlayback("seek", sec)`。
+拖动中把条的 `transition` 置为 `none`（否则游标追不上指针）。
+
+**③ 跳完必须由本地接管显示，直到真实位置跟上。**
+主轮询 500ms 一次。如果 `pointerup` 之后立刻把显示权交还给 `data.position`，
+条会**先弹回原处、再跳到目标**，看起来就像没生效。
+所以维护一个 `scrubSec` 覆盖值 + **绝对截止时间**（2.5s）：
+真实位置与它相差 < 2.5s 就交还，或者到点强制交还（兜底：seek 失败时不会永久显示假位置）。
+定时器按绝对时间算，所以每一拍重新布置也不会把它越推越晚。
+
+**④ hook 必须摆在提前 return 之前（这条最隐蔽）。**
+`MusicDetailView` 里有个 `if (!data?.active) return (...)`。我第一版把 `useRef/useState/useEffect`
+放在了它**后面** —— 曲目一旦变成"无活跃音乐"，前后两次渲染的 hook 数量就不一致，
+运行时直接抛 `Rendered fewer hooks than expected`。**tsc 完全不报这个错。**
+所以那个组件的规矩是：**hook 全在提前 return 之前，计算逻辑在之后**（代码里已标注释）。
+
+**没做的**：悬浮态（medium `MusicPage`）那条 3px 进度条**不可拖** —— 它是 hover 态的过场，
+在里面做拖拽与"鼠标一移开就收起"的交互相冲。要做的话得先改 hover 收起策略。
+
+**可发现性**：可跳转时条上有 `data-tip="点击或拖动可跳转"`（沿用项目禁原生 `title` 的约定），
+不可跳转时既不给提示也不改光标 —— 不摆出一个按不动的 affordance。
 
