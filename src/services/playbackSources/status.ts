@@ -29,8 +29,12 @@ export interface LocalLyricStatus {
   outcome: LocalLyricOutcome;
   /** 我们这边正在放的曲目（SMTC） */
   want: string;
+  /** 我们这边的时长（ms）—— 与 gotSpanMs 一起看就能判断两边是不是同一首歌 */
+  wantDurationMs?: number;
   /** 接口里读到的身份（顶层 title/artist，或 lines[0] 解析结果）；读不到则 null */
   got: string | null;
+  /** 接口那份歌词覆盖的时间跨度（ms，最后一行 endTime）——同曲时应当与 wantDurationMs 接近 */
+  gotSpanMs?: number;
   /** 附加说明（HTTP 状态、异常名等） */
   detail?: string;
 }

@@ -15,6 +15,16 @@ import {
  * 匹配规则：忽略大小写 + 子串匹配（与 eIsland 一致）。
  * 白名单为空时不做任何过滤（避免清空后永远拿不到歌曲）。
  */
+/**
+ * 毫秒 → ` m:ss`（前面留一个全角空格，直接拼在曲名后）。
+ * 同曲时两边时长应当接近 —— 这是判断「同一首歌的不同叫法」还是「放的不是同一首」的关键依据。
+ */
+function fmtDur(ms?: number): string {
+  if (!ms || ms <= 0) return "";
+  const total = Math.round(ms / 1000);
+  return `　${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export default function WhitelistSettings() {
   const { settings, updateSettings } = useSettings();
   const list = settings.musicWhitelist ?? [];
@@ -327,8 +337,20 @@ export default function WhitelistSettings() {
           {localStatus ? (
             <>
               <div className="opacity-80">最近一次：{describeOutcome(localStatus.outcome)}</div>
-              <div className="opacity-55">岛上在放：{localStatus.want}</div>
-              <div className="opacity-55">接口在放：{localStatus.got ?? "（读不到）"}</div>
+              <div className="opacity-55">
+                岛上在放：{localStatus.want}
+                {fmtDur(localStatus.wantDurationMs)}
+              </div>
+              <div className="opacity-55">
+                接口在放：{localStatus.got ?? "（读不到）"}
+                {fmtDur(localStatus.gotSpanMs)}
+              </div>
+              {localStatus.outcome === "mismatch" && (
+                <div className="opacity-45">
+                  两个曲名不一样，所以整份被丢弃了（宁可不显示，也不显示别人的歌词）。
+                  两边时长接近＝多半是同一首歌的不同叫法；差得多＝播放器和 Folia 放的不是同一首。
+                </div>
+              )}
               {localStatus.detail && <div className="opacity-45">说明：{localStatus.detail}</div>}
             </>
           ) : (

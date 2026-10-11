@@ -192,23 +192,30 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   // 身份核对以曲名为准（空曲名的 titleScore 恒为 0），没曲名就别浪费这次请求
   if (!want.title) return null;
 
+  // 时长是把「曲名对不上」判成人话的关键：同曲时它应当与 wantDurationMs 接近。
+  // 每条 status 都带上，设置页据此自证是「放的不是同一首」还是「只是叫法不同」。
+  const base = { want: label, wantDurationMs: want.durationMs };
+
   const cfg = readConfig();
   if (!cfg.enabled) {
-    recordLocalLyricStatus({ outcome: "disabled", want: label, got: null });
+    recordLocalLyricStatus({ ...base, outcome: "disabled", got: null });
     return null;
   }
 
   const loaded = await loadRaw(cfg);
   if ("error" in loaded) {
-    recordLocalLyricStatus({ outcome: "unreachable", want: label, got: null, detail: loaded.error });
+    recordLocalLyricStatus({ ...base, outcome: "unreachable", got: null, detail: loaded.error });
     return null;
   }
   if ("idle" in loaded) {
-    recordLocalLyricStatus({ outcome: "idle", want: label, got: null });
+    recordLocalLyricStatus({ ...base, outcome: "idle", got: null });
     return null;
   }
   const { raw, rawLines } = loaded;
   const got = readIdentity(raw, str(rawLines[0]?.text));
+  const lastEnd = num(rawLines[rawLines.length - 1]?.endTime);
+  const gotSpanMs = lastEnd !== null ? Math.round(lastEnd * 1000) : undefined;
+  const withGot = { ...base, got, gotSpanMs };
 
   // —— ① 身份核对：优先用官方可选字段，缺失才回退解析 lines[0] ——
   const topTitle = str(raw.title).trim();
@@ -220,7 +227,7 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
     : firstCandidates.some((c) => isSameTrack(c, want));
 
   if (!matched) {
-    recordLocalLyricStatus({ outcome: "mismatch", want: label, got });
+    recordLocalLyricStatus({ ...withGot, outcome: "mismatch" });
     console.info(`${LOG} 曲目不匹配，丢弃（接口在放：${got ?? "未知"}）`);
     return null;
   }
