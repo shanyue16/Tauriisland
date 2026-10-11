@@ -31,7 +31,14 @@
         { "url": "https://u.y.qq.com/*" },
         { "url": "https://c.y.qq.com/*" },
         { "url": "https://y.qq.com/*" },
-        { "url": "https://shc.y.qq.com/*" }
+        { "url": "https://shc.y.qq.com/*" },
+
+        { "url": "http://127.0.0.1:32109/*" },
+        { "url": "http://127.0.0.1:32107/*" },
+        { "url": "http://127.0.0.1:9863/*" },
+        { "url": "http://127.0.0.1:8765/*" },
+        { "url": "http://127.0.0.1:*/*" },
+        { "url": "http://localhost:*/*" }
       ]
     }
   ]
