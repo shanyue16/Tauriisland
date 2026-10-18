@@ -31,13 +31,47 @@ function persist(settings: Settings) {
   disk.write(settings);
 }
 
+/**
+ * 旧版默认白名单（26.10.1801 及更早）。
+ *
+ * 为什么需要：盘上存的列表永远优先于 DEFAULT_SETTINGS，直接改默认值对**老配置**
+ * 一点作用都没有 —— 用户升级后会以为「加了 Folia」却看不到任何变化。
+ * 这里做一次性判断：内容与顺序完全等于旧默认 → 换成新默认（多出 Folia）；
+ * 用户只要增删过任意一条，就当作自定义，原样保留。
+ */
+const LEGACY_DEFAULT_MUSIC_WHITELIST = [
+  "QQMusic.exe",
+  "cloudmusic.exe",
+  "汽水音乐",
+  "kugou",
+  "PotPlayerMini64.exe",
+];
+
+function isLegacyDefaultWhitelist(list: string[]): boolean {
+  return (
+    list.length === LEGACY_DEFAULT_MUSIC_WHITELIST.length &&
+    list.every(
+      (v, i) => v.toLowerCase() === LEGACY_DEFAULT_MUSIC_WHITELIST[i].toLowerCase(),
+    )
+  );
+}
+
+/** 本次归一化是否把旧默认白名单升级成了新默认 —— hydrateSettings 据此补一次落盘。 */
+let whitelistUpgraded = false;
+
 /** 白名单字段规范化：只保留非空字符串（数组存在即为用户意图，空数组＝不过滤，需保留） */
 function normalizeWhitelist(value: unknown): string[] {
   if (!Array.isArray(value)) return [...DEFAULT_SETTINGS.musicWhitelist];
-  return value
+  const list = value
     .filter((v): v is string => typeof v === "string")
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
+  return isLegacyDefaultWhitelist(list)
+    ? (() => {
+        whitelistUpgraded = true;
+        return [...DEFAULT_SETTINGS.musicWhitelist];
+      })()
+    : list;
 }
 
 /**
@@ -290,10 +324,14 @@ export async function hydrateSettings(): Promise<void> {
     const saved = (await disk.read()) as Partial<Settings> | null;
     const next = normalizeSettings(saved);
     useSettings.setState({ settings: next });
-    // 旧版把音频本体写在 settings.json 里：搬进 sounds.json，并把 settings 侧重写成纯元数据
-    if (legacySoundData.length > 0) {
-      useCustomSounds.getState().migrate(legacySoundData);
-      legacySoundData = [];
+    // 旧版把音频本体写在 settings.json 里：搬进 sounds.json，并把 settings 侧重写成纯元数据。
+    // 白名单从旧默认升级到新默认（新增 Folia）同样要落盘一次，否则每次启动都白算一遍。
+    if (legacySoundData.length > 0 || whitelistUpgraded) {
+      if (legacySoundData.length > 0) {
+        useCustomSounds.getState().migrate(legacySoundData);
+        legacySoundData = [];
+      }
+      whitelistUpgraded = false;
       persist(next);
     }
   } catch {

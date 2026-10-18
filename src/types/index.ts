@@ -258,12 +258,16 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherCity: "",
 
   // 默认白名单参考 eIsland
+  // "Folia" 同时覆盖三种上报形式：进程名 Folia.exe、带路径的 id、打包应用 AUMID
+  // （实测开始菜单 AppID = top.izuna.foliamajor，SMTC 侧形如 top.izuna.foliamajor_xxx!App）。
+  // 匹配是 case-insensitive 子串包含，写 "Folia" 一处就够。
   musicWhitelist: [
     "QQMusic.exe",
     "cloudmusic.exe",
     "汽水音乐",
     "kugou",
     "PotPlayerMini64.exe",
+    "Folia",
   ],
 
   // 本地歌词接口（默认指向 Folia；关掉后级联只剩网络源）

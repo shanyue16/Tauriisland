@@ -97,6 +97,11 @@ export function useMusic() {
   const lastRawPosRef = useRef<number>(0);
   const lastTrackStablePollsRef = useRef<number>(0); // 同一 track 连续 poll 次数
 
+  // 上一拍还没回来就跳过这一拍：Rust 侧 SMTC 采集跑在单线程 STA 队列上，
+  // 请求一旦堆积（某个播放器偶尔 3s 才回），后面的请求会排到几拍之后 ——
+  // 表现就是「切歌后很长时间都读不到新歌信息」。
+  const pollBusyRef = useRef(false);
+
   // 66ms tick
   const tickTimerRef = useRef<number | null>(null);
   const playingRef = useRef<boolean>(false);
@@ -156,6 +161,8 @@ export function useMusic() {
 
   /** 主 poll 函数 — 500ms 一次，只刷新基准值 */
   const poll = useCallback(async () => {
+    if (pollBusyRef.current) return; // 上一拍未回，丢弃本拍（见 pollBusyRef 注释）
+    pollBusyRef.current = true;
     try {
       const m = await fetchMusic();
 
@@ -396,6 +403,7 @@ export function useMusic() {
         position: 0, duration: 0, timeline_lut: null, timestamp: Date.now(),
       });
     } finally {
+      pollBusyRef.current = false;
       setLoading(false);
     }
   }, [ensureTick, stopTick]);

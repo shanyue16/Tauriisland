@@ -372,6 +372,65 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transform: translateY(0) scale(0.96);
 }
 
+/* ===== 歌词交叉淡入淡出（失焦态单行 / 展开态多行共用） =====
+   两层叠放：.lyric-in 在文档流里占位，.lyric-out 绝对定位叠在上面。
+   容器高度由当前行固定行高决定，换行时父级布局不抖。 */
+.lyric-stage {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+.lyric-stage > .lyric-in,
+.lyric-stage > .lyric-out {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lyric-out {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+@keyframes lyricIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes lyricOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.lyric-in {
+  animation: lyricIn calc(260ms * var(--motion-factor, 1)) var(--ease-out) both;
+}
+.lyric-out {
+  animation: lyricOut calc(200ms * var(--motion-factor, 1)) var(--ease-in-out) both;
+}
+/* 右侧渐隐：长歌词被截断时不再是硬切口（失焦态用） */
+.lyric-fade-x {
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+/* 上下边缘渐隐：多行歌词滚动窗口的两端淡出（展开态用） */
+.lyric-fade-y {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 11px, #000 calc(100% - 11px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 11px, #000 calc(100% - 11px), transparent 100%);
+}
+
 /* ===== REDUCED MOTION（必须放在文件最后） =====
    无障碍口径：去掉"位移/缩放"这类会引起前庭不适的运动，保留帮助理解状态变化的
    透明度过渡。放在末尾是为了稳压前面所有同特异度的规则（CSS 里后者胜）。 */
@@ -397,6 +456,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   .row-in {
     animation: none;
+  }
+  /* 歌词：去掉淡入淡出后必须把旧行藏掉，否则两层文字会重叠 260ms */
+  .lyric-in {
+    animation: none;
+  }
+  .lyric-out {
+    display: none;
   }
   @starting-style {
     .ui-popover,

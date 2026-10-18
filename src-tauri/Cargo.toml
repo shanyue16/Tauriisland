@@ -44,6 +44,10 @@ windows = { version = "0.58", features = [
   "Storage_Streams",
   "Win32_Foundation",
   "Win32_System_Com",
+  # 单实例守卫：CreateEventW/OpenEventW/SetEvent/WaitForSingleObject 在 Win32::System::Threading 下
+  # 其签名里带 SECURITY_ATTRIBUTES，缺 Win32_Security 时这几个函数不会被导出（unresolved import）。
+  "Win32_System_Threading",
+  "Win32_Security",
   # 全屏隐藏：SHQueryUserNotificationState 在 Win32::UI::Shell 下，
   # 没有这个 feature 会报 "could not find Shell in UI"（同 Foundation_Collections 那类门控）。
   "Win32_UI_Shell",

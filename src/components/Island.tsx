@@ -22,6 +22,7 @@ import { sendNotification } from "../services/notify";
 import { playPromptSound, startAlarm, stopAlarm } from "../services/audio";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
+import LyricCrossfade from "./LyricCrossfade";
 import { useCoverAccent } from "../hooks/useCoverAccent";
 import { MOTION, PAGE_SHIFT, STATE_ORDER, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
 import { useMotionDirection } from "../hooks/useMotionDirection";
@@ -1472,9 +1473,12 @@ function MinimalContent({
               </span>
             )}
           </div>
-          <span className="text-[9.5px] truncate" style={{ color: muted, opacity: 0.95 }}>
-            {miniLyric?.text ?? (musicData.playing ? t("music.playing") : t("music.paused"))}
-          </span>
+          {/* 歌词行：交叉淡入淡出 + 右侧渐隐。固定 12px 行高，换行时上面那行不被顶动。 */}
+          <LyricCrossfade
+            className="text-[9.5px] lyric-fade-x"
+            style={{ color: muted, opacity: 0.95, height: 12, lineHeight: "12px" }}
+            text={miniLyric?.text ?? (musicData.playing ? t("music.playing") : t("music.paused"))}
+          />
         </div>
 
         {/* 时间 */}
@@ -1870,7 +1874,12 @@ function MusicDetailView({
               {data.album ? ` · ${data.album}` : ""}
             </div>
           </div>
-          <LyricsBlock lyrics={lyrics} positionMs={(data.position || 0) * 1000} playing={data.playing} />
+          <LyricsBlock
+          lyrics={lyrics}
+          positionMs={(data.position || 0) * 1000}
+          playing={data.playing}
+          accent={accentColor}
+        />
 
           {/* 进度条 + 时间：时间紧贴条下（5px），"现在到哪了"一眼可读 */}
           <div className="relative mt-[12px]" style={{ zIndex: 1 }}>
@@ -1935,10 +1944,13 @@ function LyricsBlock({
   lyrics,
   positionMs,
   playing,
+  accent,
 }: {
   lyrics: LyricLine[];
   positionMs: number;
   playing: boolean;
+  /** 封面主色：与光晕/丝线/进度条/播放键同源，由 useCoverAccent 从封面提取 */
+  accent: string;
 }) {
   const { t } = useI18n();
   // 找当前歌词行索引
@@ -1956,64 +1968,112 @@ function LyricsBlock({
         className="flex-1 min-h-0 mt-[10px] flex items-center text-[11px]"
         style={{ color: "var(--island-text-muted)" }}
       >
-        {playing ? t("music.waitingLyricPlaying") : t("music.waitingLyricPaused")}
+        <LyricCrossfade
+          text={playing ? t("music.waitingLyricPlaying") : t("music.waitingLyricPaused")}
+        />
       </div>
     );
   }
 
-  // 多行歌词（用户要求）：当前行上下各两行、共 5 行；越远的行越小越淡，
-  // 当前行最大最亮 —— 不用滚动就能看出"唱到哪了"。
+  // 多行歌词：视口固定 5 行，每行按"全局行号 × 行高"绝对定位，外层整条轨道用
+  // translateY 滚动 —— 换行永远是"滑上去一格"，不存在重锚，也不会整块跳一格。
+  // 旧实现每次跳行都会同时改字号（13/11 → 行高不同）和行位置，那正是展开态"闪"的来源。
   const cur = currentIdx ?? 0;
-  const startIdx = Math.max(0, cur - 2);
-  const endIdx = Math.min(lyrics.length, startIdx + 5);
-  const nearby = lyrics.slice(startIdx, endIdx);
+  const ROW_H = 18; // 固定行高：位移与行数成精确整数倍，不累积半像素
+  const GAP = 2;
+  const SLOT = ROW_H + GAP;
+  const VIEW_ROWS = 5;
+  const LEAD = 2; // 当前行固定落在视口第 3 行
+  const BUFFER = 6; // 视口上下各多渲染 6 行，行在遮罩之外才卸载
+
+  const from = Math.max(0, cur - LEAD - BUFFER);
+  const to = Math.min(lyrics.length, cur + VIEW_ROWS - LEAD + BUFFER);
+
+  // 同一毫秒上的多行歌词（对唱 / 翻译行）会让 key 撞车 → React 复用错节点，正好复现"闪"。
+  const nthByTime = new Map<number, number>();
+  const rows = lyrics.slice(from, to).map((line, k) => {
+    const nth = (nthByTime.get(line.time_ms) ?? 0) + 1;
+    nthByTime.set(line.time_ms, nth);
+    return { line, idx: from + k, key: `${line.time_ms}#${nth}` };
+  });
 
   return (
     // 歌词左对齐、占据标题与进度条之间的弹性区并垂直居中：
     // 与左侧封面构成"图 + 文"的整块阅读区（原实现是居中对齐，与封面的左轴打架）。
-    <div className="flex-1 min-h-0 mt-[10px] flex flex-col justify-center gap-[5px] min-w-0">
-      {nearby.map((line, i) => {
-        const dist = Math.abs(startIdx + i - cur);
-        const isCurrent = dist === 0;
-        // 逐字（卡拉OK）只做**当前行**，且只在这一行真的带逐字时间轴时。
-        // words 只由本地源（Folia 原生逐字）给出 —— provider 已经在「不做逐字」时
-        // 把它丢掉了，所以这里不需要再问一次「要不要逐字」。
-        // 不给 5 行都建 span：66ms 一跳的重渲染下，一行就够表达"唱到哪个字"。
-        const words = isCurrent && line.words && line.words.length > 0 ? line.words : null;
-        return (
-          <div
-            key={`${startIdx + i}-${line.time_ms}`}
-            className="truncate max-w-full"
-            style={{
-              fontSize: isCurrent ? 13 : 11,
-              fontWeight: isCurrent ? 500 : 400,
-              color: "var(--island-text)",
-              opacity: isCurrent ? 1 : dist === 1 ? 0.42 : 0.24,
-              transition: "color 200ms ease, font-size 200ms ease, opacity 200ms ease",
-              lineHeight: 1.3,
-            }}
-          >
-            {words
-              ? words.map((w, wi) => (
-                  // 逐字不做过渡：66ms 一跳 + 200ms 过渡会糊成拖影
-                  <span
-                    key={wi}
-                    style={{
-                      color:
-                        positionMs >= w.end_ms
-                          ? "var(--island-text)"
-                          : positionMs >= w.start_ms
-                            ? "var(--island-accent)"
-                            : "var(--island-text-muted)",
-                    }}
-                  >
-                    {w.text}
-                  </span>
-                ))
-              : line.text}
-          </div>
-        );
-      })}
+    <div className="flex-1 min-h-0 mt-[10px] flex flex-col justify-center min-w-0">
+      <div
+        className="relative overflow-hidden lyric-fade-y"
+        style={{ height: VIEW_ROWS * ROW_H + (VIEW_ROWS - 1) * GAP }}
+      >
+        <div
+          style={{
+            position: "relative",
+            height: 0,
+            transform: `translateY(${(LEAD - cur) * SLOT}px)`,
+            transition: "transform calc(340ms * var(--motion-factor, 1)) var(--ease-out)",
+            willChange: "transform",
+          }}
+        >
+          {rows.map(({ line, idx, key }) => {
+            const dist = Math.abs(idx - cur);
+            const isCurrent = dist === 0;
+            // 逐字（卡拉OK）只做**当前行**，且只在这一行真的带逐字时间轴时。
+            // words 只由本地源（Folia 原生逐字）给出 —— provider 已经在「不做逐字」时
+            // 把它丢掉了，所以这里不需要再问一次「要不要逐字」。
+            // 不给所有行都建 span：66ms 一跳的重渲染下，一行就够表达"唱到哪个字"。
+            const words = isCurrent && line.words && line.words.length > 0 ? line.words : null;
+            return (
+              <div
+                // key 用行时间戳（不是"窗口内序号"）：窗口滑动时同一行的 key 不变，
+                // 否则整条轨道重挂载，过渡从头开始 —— 那是另一种闪。
+                key={key}
+                className="min-w-0 max-w-full lyric-fade-x"
+                style={{
+                  position: "absolute",
+                  top: idx * SLOT,
+                  left: 0,
+                  right: 0,
+                  height: ROW_H,
+                  lineHeight: `${ROW_H}px`,
+                  fontSize: isCurrent ? 13 : 11,
+                  fontWeight: isCurrent ? 500 : 400,
+                  // 当前行用封面主色（与光晕/进度条同源）；相邻行保持正文色，
+                  // 靠透明度分层，避免整块歌词被彩色淹没。
+                  color: isCurrent ? accent : "var(--island-text)",
+                  opacity: isCurrent ? 1 : dist === 1 ? 0.46 : 0.22,
+                  // 当前行自发光同样取封面色，与进度条的那层辉光一致
+                  textShadow: isCurrent ? `0 0 14px ${accent}59` : "none",
+                  transition:
+                    "font-size 220ms var(--ease-out), opacity 220ms var(--ease-out), color 260ms var(--ease-out), text-shadow 260ms var(--ease-out)",
+                }}
+              >
+                {words ? (
+                  words.map((w, wi) => (
+                    // 逐字不做过渡：66ms 一跳 + 200ms 过渡会糊成拖影
+                    <span
+                      key={wi}
+                      style={{
+                        // 逐字进度同样走封面色：未唱=主色半透明，正在唱=主色，
+                        // 已唱=正文色（保证唱过的字在彩色行里仍然清楚）
+                        color:
+                          positionMs >= w.end_ms
+                            ? "var(--island-text)"
+                            : positionMs >= w.start_ms
+                              ? accent
+                              : `${accent}80`,
+                      }}
+                    >
+                      {w.text}
+                    </span>
+                  ))
+                ) : (
+                  <LyricCrossfade text={line.text} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

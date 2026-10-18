@@ -6,6 +6,7 @@
 mod fullscreen;
 mod hotkeys;
 mod notifications;
+mod single_instance;
 mod smtc;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -170,6 +171,10 @@ fn set_hotkeys(app: tauri::AppHandle, quit: String, toggle: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 单实例判定必须在任何窗口/托盘/线程创建之前 —— 第二个实例直接在这里退出，
+    // 只负责把已有的那个叫醒（见 single_instance 模块注释）。
+    single_instance::ensure_single_instance();
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -206,6 +211,9 @@ pub fn run() {
                 }
                 let _ = window.show();
             }
+
+            // 单实例：监听「用户又点了一次应用」的信号，把窗口拉出来置前。
+            single_instance::spawn_activation_listener(app.handle().clone());
 
             // 系统托盘：**失败绝不能带走整个应用**。
             // 历史故障（症状"窗口闪一下就消失"）：窗口已经在上面 show() 出来了，随后

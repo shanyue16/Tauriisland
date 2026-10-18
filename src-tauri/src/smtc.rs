@@ -16,6 +16,7 @@ use windows::Foundation::{AsyncStatus, IAsyncAction, IAsyncOperation};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession,
     GlobalSystemMediaTransportControlsSessionManager,
+    GlobalSystemMediaTransportControlsSessionMediaProperties,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 use windows::Storage::Streams::DataReader;
@@ -343,6 +344,36 @@ fn drop_manager() {
     *manager_slot().lock().unwrap() = None;
 }
 
+/// 连续「会话还活着但读不到任何标题」的轮数。到阈值就重建一次 manager：
+/// 系统媒体宿主重启、播放器重建会话之后，旧 manager 手里的会话对象会一直读空，
+/// 表现为「第一首正常，切歌后再也不显示」。重建限频 10s，避免把它当灵丹妙药死循环。
+static EMPTY_TITLE_STREAK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+static LAST_MANAGER_DROP: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+
+fn last_manager_drop() -> &'static Mutex<Option<std::time::Instant>> {
+    LAST_MANAGER_DROP.get_or_init(|| Mutex::new(None))
+}
+
+fn note_title_state(has_title: bool) {
+    use std::sync::atomic::Ordering;
+    if has_title {
+        EMPTY_TITLE_STREAK.store(0, Ordering::Relaxed);
+        return;
+    }
+    let n = EMPTY_TITLE_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
+    if n < 4 {
+        return;
+    }
+    EMPTY_TITLE_STREAK.store(0, Ordering::Relaxed);
+    let mut slot = last_manager_drop().lock().unwrap();
+    if slot.map(|at| at.elapsed() > Duration::from_secs(10)).unwrap_or(true) {
+        *slot = Some(std::time::Instant::now());
+        drop(slot);
+        drop_manager();
+    }
+}
+
 /// 取（并缓存）会话管理器 —— 只在 STA 工作线程上调用。
 fn acquire_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, String> {
     if let Some(m) = manager_slot().lock().unwrap().as_ref() {
@@ -387,22 +418,56 @@ fn session_is_playing(session: &GlobalSystemMediaTransportControlsSession) -> bo
         .unwrap_or(false)
 }
 
-/// 读取 title/artist/有无封面（短超时）。仅用于挑选与诊断；正式采集仍走原逻辑。
-fn probe_title_artist(
+/// 读一次 media properties（短超时）。**这是每拍唯一允许发起的那一次请求** ——
+/// 见 select_session 的注释：重复发同一个会话的 TryGetMediaPropertiesAsync 会让
+/// 迟迟不回的请求堵死 STA 线程的消息泵（foobar2000 这类只在一部分时刻才应答的
+/// 播放器尤其明显：第一首能读，之后每拍都超时，信息就再也不出现了）。
+/// 上次读 media properties 超时的时刻 —— 超时后 2s 内不再发新请求。
+///
+/// 为什么需要：`IAsyncOperation` 一旦挂起就取消不掉，它会一直占着 STA 消息泵。
+/// 如果每拍都补一个新的超时请求，队列只会越排越长，最后**所有**请求都超时，
+/// 表现就是「切歌后歌曲信息再也不出来」。
+static PROPS_TIMEOUT_AT: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+
+fn props_timeout_at() -> &'static Mutex<Option<std::time::Instant>> {
+    PROPS_TIMEOUT_AT.get_or_init(|| Mutex::new(None))
+}
+
+const PROPS_BACKOFF: Duration = Duration::from_secs(2);
+
+fn read_media_props(
     session: &GlobalSystemMediaTransportControlsSession,
     timeout_ms: u64,
-) -> (Option<String>, Option<String>, bool) {
-    let op = match session.TryGetMediaPropertiesAsync().ok() {
-        Some(op) => op,
-        None => return (None, None, false),
-    };
+) -> Option<GlobalSystemMediaTransportControlsSessionMediaProperties> {
+    if let Some(at) = *props_timeout_at().lock().unwrap() {
+        if at.elapsed() < PROPS_BACKOFF {
+            return None; // 退避窗口内：本拍不发请求，交给下一拍
+        }
+    }
+    let op = session.TryGetMediaPropertiesAsync().ok()?;
     match wait_async(&op, timeout_ms) {
-        Ok(mp) => (
+        Ok(props) => {
+            *props_timeout_at().lock().unwrap() = None;
+            Some(props)
+        }
+        Err(_) => {
+            *props_timeout_at().lock().unwrap() = Some(std::time::Instant::now());
+            None
+        }
+    }
+}
+
+/// 从 properties 里摘出 (title, artist, 有无封面)，只给挑选/诊断用。
+fn summarize_props(
+    props: &Option<GlobalSystemMediaTransportControlsSessionMediaProperties>,
+) -> (Option<String>, Option<String>, bool) {
+    match props {
+        Some(mp) => (
             mp.Title().ok().and_then(rt_to_string),
             mp.Artist().ok().and_then(rt_to_string),
             mp.Thumbnail().is_ok(),
         ),
-        Err(_) => (None, None, false),
+        None => (None, None, false),
     }
 }
 
@@ -427,16 +492,25 @@ fn enumerate_sessions(
     all
 }
 
-/// 采集用选取：current（有标题/歌手）→ 正在播放 → 有标题 → 有歌手 → 第一个
+/// 采集用选取：current（有标题/歌手）→ 正在播放 → 有标题 → 有歌手 → 第一个。
+///
+/// 返回值里带着**已经读到的 properties**，调用方直接复用，不要再读第二次：
+/// 每个会话每拍只发一次 `TryGetMediaPropertiesAsync`。重复发会让不回应的请求在
+/// STA 线程上越积越多，最终整条采集链瘫痪（表现为「切歌后再也读不到歌曲信息」）。
+#[allow(clippy::type_complexity)]
 fn select_session(
     manager: &GlobalSystemMediaTransportControlsSessionManager,
     diag: &mut Vec<String>,
-) -> Option<GlobalSystemMediaTransportControlsSession> {
+) -> Option<(
+    GlobalSystemMediaTransportControlsSession,
+    Option<GlobalSystemMediaTransportControlsSessionMediaProperties>,
+)> {
     let current = manager.GetCurrentSession().ok();
     let all = enumerate_sessions(manager, diag);
 
     if let Some(cur) = current.as_ref() {
-        let (t, a, img) = probe_title_artist(cur, 800);
+        let props = read_media_props(cur, 800);
+        let (t, a, img) = summarize_props(&props);
         diag.push(format!(
             "current={}|t={}|a={}|img={}",
             session_app_id(cur),
@@ -445,7 +519,7 @@ fn select_session(
             if img { 1 } else { 0 }
         ));
         if t.is_some() || a.is_some() {
-            return current;
+            return Some((cur.clone(), props));
         }
         diag.push("current empty -> enumerate".into());
     } else {
@@ -453,22 +527,26 @@ fn select_session(
     }
 
     if all.is_empty() {
-        return current; // 枚举不到就维持原行为
+        return current.map(|c| (c, None)); // 枚举不到就维持原行为
     }
 
     // 1) 正在播放的优先（不额外读属性，最快）
     for (i, s) in all.iter().enumerate() {
         if session_is_playing(s) {
             diag.push(format!("picked #{} via=playing", i));
-            return Some(s.clone());
+            return Some((s.clone(), None));
         }
     }
 
     // 2) 都不在播放 → 最多探测 3 个会话，找有标题/歌手的
-    let mut first_with_artist: Option<GlobalSystemMediaTransportControlsSession> = None;
+    let mut first_with_artist: Option<(
+        GlobalSystemMediaTransportControlsSession,
+        Option<GlobalSystemMediaTransportControlsSessionMediaProperties>,
+    )> = None;
     let mut first_with_artist_idx = 0usize;
     for (i, s) in all.iter().enumerate().take(3) {
-        let (t, a, img) = probe_title_artist(s, 600);
+        let props = read_media_props(s, 600);
+        let (t, a, img) = summarize_props(&props);
         diag.push(format!(
             "#{}({})|t={}|a={}|img={}",
             i,
@@ -479,19 +557,19 @@ fn select_session(
         ));
         if t.is_some() {
             diag.push(format!("picked #{} via=title", i));
-            return Some(s.clone());
+            return Some((s.clone(), props));
         }
         if a.is_some() && first_with_artist.is_none() {
-            first_with_artist = Some(s.clone());
+            first_with_artist = Some((s.clone(), props));
             first_with_artist_idx = i;
         }
     }
-    if let Some(s) = first_with_artist {
+    if let Some(picked) = first_with_artist {
         diag.push(format!("picked #{} via=artist", first_with_artist_idx));
-        return Some(s);
+        return Some(picked);
     }
     diag.push("picked #0 via=first".into());
-    Some(all[0].clone())
+    Some((all[0].clone(), None))
 }
 
 /// 播放控制 / seek 用：current → 正在播放 → 第一个（不做属性探测，保持快速）
@@ -570,7 +648,7 @@ pub fn get_music_info_blocking() -> Result<MusicInfo, String> {
     let picked = select_session(&manager, &mut diag_parts);
     info.sessions_diag = Some(truncate_diag(&diag_parts));
 
-    let Some(session) = picked else {
+    let Some((session, preloaded_props)) = picked else {
         let mut last = last_music_lock().lock().unwrap();
         let had_last = last.is_some();
         *last = None;
@@ -591,11 +669,11 @@ pub fn get_music_info_blocking() -> Result<MusicInfo, String> {
         info.app_name = rt_to_string(id);
     }
 
-    // media properties
-    let media_props_opt: Option<_> = (|| {
-        let op = session.TryGetMediaPropertiesAsync().ok()?;
-        wait_async(&op, 3000).ok()
-    })();
+    // media properties —— 挑选阶段已经读过就直接复用，**整拍只发这一次请求**
+    let media_props_opt = match preloaded_props {
+        Some(p) => Some(p),
+        None => read_media_props(&session, 3000),
+    };
 
     if let Some(media_props) = media_props_opt.as_ref() {
         if let Ok(v) = media_props.Title() { info.title = rt_to_string(v); }
@@ -607,6 +685,9 @@ pub fn get_music_info_blocking() -> Result<MusicInfo, String> {
         info.title.clone().unwrap_or_default(),
         info.artist.clone().unwrap_or_default(),
     );
+
+    // 会话选到了却读不到标题：连续几拍就重建 manager（失效会话的兜底）
+    note_title_state(!track_key.0.trim().is_empty());
 
     // ========== 封面: 缓存 + 延迟重试 ==========
     {
