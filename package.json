@@ -1,7 +1,7 @@
 {
   "name": "tauriisland",
   "private": true,
-  "version": "26.10.1205",
+  "version": "26.10.1206",
   "type": "module",
   "scripts": {
     "dev": "vite",

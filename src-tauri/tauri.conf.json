@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Tauriisland",
-  "version": "26.10.1205",
+  "version": "26.10.1206",
   "identifier": "com.tauriisland.app",
   "build": {
     "frontendDist": "../dist",
