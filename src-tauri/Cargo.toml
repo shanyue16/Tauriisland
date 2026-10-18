@@ -1,6 +1,6 @@
 [package]
 name = "tauriisland"
-version = "26.10.1206"
+version = "26.10.1801"
 description = "A Dynamic Island for Windows"
 authors = ["you"]
 edition = "2021"
