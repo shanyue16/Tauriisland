@@ -1,10 +1,13 @@
 import { create } from "zustand";
-import { LazyStore } from "@tauri-apps/plugin-store";
 import {
   type Settings,
   type IslandState,
+  type CustomSound,
+  type CustomSoundMeta,
   DEFAULT_SETTINGS,
 } from "../types";
+import { useCustomSounds } from "./customSounds";
+import { createDiskChannel } from "./disk";
 
 interface SettingsStore {
   settings: Settings;
@@ -21,24 +24,11 @@ interface SettingsStore {
 // 每次 updateSettings 后落盘。任何一步失败都只当"没存过"，不影响运行。
 const STORE_FILE = "settings.json";
 const STORE_KEY = "settings";
-const diskStore = new LazyStore(STORE_FILE);
-
-let persistTimer: number | null = null;
+const disk = createDiskChannel<Settings>(STORE_FILE, STORE_KEY);
 
 /** 落盘（合并写入，200ms 去抖，避免连续拖动滑块时频繁写文件） */
 function persist(settings: Settings) {
-  if (persistTimer !== null) window.clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(() => {
-    persistTimer = null;
-    void (async () => {
-      try {
-        await diskStore.set(STORE_KEY, settings);
-        await diskStore.save();
-      } catch {
-        /* 持久化不可用时静默降级为内存设置 */
-      }
-    })();
-  }, 200);
+  disk.write(settings);
 }
 
 /** 白名单字段规范化：只保留非空字符串（数组存在即为用户意图，空数组＝不过滤，需保留） */
@@ -86,6 +76,7 @@ function cloneDefaults(): Settings {
     ...DEFAULT_SETTINGS,
     musicWhitelist: [...DEFAULT_SETTINGS.musicWhitelist],
     notificationBlacklist: [...DEFAULT_SETTINGS.notificationBlacklist],
+    customSounds: [...DEFAULT_SETTINGS.customSounds],
   };
 }
 
@@ -100,15 +91,132 @@ const str = (v: unknown, def: string): string => (typeof v === "string" ? v : de
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], def: T): T =>
   typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : def;
 
+/**
+ * 自定义音效（data URL）规范化。
+ *
+ * 只接受 `data:audio/...` 开头的串，并挡掉明显超限的（正常上传上限 400KB，
+ * base64 后约 533KB；这里留到 800KB 容忍边界，超过就当没设置过）。
+ * 不校验音频能否解码 —— 解不了留给播放侧报错，别在设置层猜。
+ */
+const MAX_CUSTOM_SOUND_CHARS = 800_000;
+/** 自定义音效最多存几条（每条最大 800K 字符，再多 settings.json 会太肥） */
+export const MAX_CUSTOM_SOUND_ITEMS = 12;
+
+function validSoundData(v: unknown): v is string {
+  return typeof v === "string" && v.startsWith("data:audio/") && v.length <= MAX_CUSTOM_SOUND_CHARS;
+}
+
+/**
+ * 自定义音效库规范化 + 旧字段迁移。
+ *
+ * 旧版本只有两个字符串字段（notificationSoundCustom / alarmSoundCustom，各存一条），
+ * 这里把它们转成音效库里的条目，并把选择重新指向新 id —— 老用户升级后不会「音效没了」。
+ */
+function normalizeCustomSounds(
+  raw: unknown,
+  legacyNotify: unknown,
+  legacyAlarm: unknown
+): { metas: CustomSoundMeta[]; legacy: CustomSound[] } {
+  const out: CustomSound[] = [];
+  const seen = new Set<string>();
+  const push = (item: Partial<CustomSound>, fallbackKind: "notification" | "alarm") => {
+    if (!validSoundData(item.data)) return;
+    const kind: "notification" | "alarm" =
+      item.kind === "notification" || item.kind === "alarm" ? item.kind : fallbackKind;
+    let id = typeof item.id === "string" && item.id.startsWith("custom:") ? item.id : "";
+    if (!id || seen.has(id)) id = `custom:${Math.random().toString(36).slice(2, 10)}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim().slice(0, 40) : "",
+      kind,
+      data: item.data,
+      size: typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0,
+    });
+  };
+
+  // 已经是「只有元数据」的新格式：data 不存在，直接收
+  const pushMeta = (item: Partial<CustomSoundMeta>, fallbackKind: "notification" | "alarm") => {
+    if (typeof item.id !== "string" || !item.id.startsWith("custom:")) return;
+    if (seen.has(item.id)) return;
+    seen.add(item.id);
+    out.push({
+      id: item.id,
+      name: typeof item.name === "string" ? item.name.trim().slice(0, 40) : "",
+      kind: item.kind === "notification" || item.kind === "alarm" ? item.kind : fallbackKind,
+      size: typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0,
+      // 占位：元数据项没有 data，迁移时由 customSounds store 按 id 补齐
+      data: "",
+    });
+  };
+
+  if (Array.isArray(raw)) {
+    for (const item of raw as Partial<CustomSound>[]) {
+      if (out.length >= MAX_CUSTOM_SOUND_ITEMS) break;
+      if (!item || typeof item !== "object") continue;
+      if (validSoundData(item.data)) push(item, "notification");
+      else pushMeta(item, "notification");
+    }
+  }
+  // 旧版单条字段 → 迁移（id 固定，重复读取不会叠加）
+  if (out.length < MAX_CUSTOM_SOUND_ITEMS) {
+    push(
+      {
+        id: "custom:legacy-notify",
+        name: "旧自定义通知音",
+        kind: "notification",
+        data: typeof legacyNotify === "string" ? legacyNotify : undefined,
+      },
+      "notification"
+    );
+  }
+  if (out.length < MAX_CUSTOM_SOUND_ITEMS) {
+    push(
+      {
+        id: "custom:legacy-alarm",
+        name: "旧自定义闹钟音",
+        kind: "alarm",
+        data: typeof legacyAlarm === "string" ? legacyAlarm : undefined,
+      },
+      "alarm"
+    );
+  }
+
+  const metas: CustomSoundMeta[] = out.map(({ id, name, kind, size }) => ({ id, name, kind, size }));
+  const legacy = out.filter((s) => s.data.length > 0);
+  return { metas, legacy };
+}
+
+/** 把旧版 `"custom"` 选择重指到迁移后的条目 */
+function remapLegacyChoice(choice: string, sounds: CustomSoundMeta[], kind: "notification" | "alarm"): string {
+  if (choice !== "custom") return choice;
+  const hit = sounds.find((s) => s.kind === kind);
+  return hit ? hit.id : kind === "notification" ? "prompt-short" : "clock-ringing";
+}
+
+/** normalizeSettings 顺手收集到的「音频本体」，交给 customSounds store 落盘 */
+let legacySoundData: CustomSound[] = [];
+
 /** 把磁盘上的任意内容规范成完整、类型正确的 Settings */
 function normalizeSettings(raw: unknown): Settings {
   const d = DEFAULT_SETTINGS;
   if (!raw || typeof raw !== "object") return cloneDefaults();
-  const r = raw as Partial<Settings>;
+  const r = raw as Partial<Settings> & {
+    notificationSoundCustom?: unknown;
+    alarmSoundCustom?: unknown;
+  };
+  const { metas: customSounds, legacy } = normalizeCustomSounds(
+    r.customSounds,
+    r.notificationSoundCustom,
+    r.alarmSoundCustom
+  );
+  legacySoundData = legacy;
   return {
     // 外观
     style: oneOf(r.style, ["floating", "docked"] as const, d.style),
     theme: oneOf(r.theme, ["dark", "light"] as const, d.theme),
+    language: oneOf(r.language, ["auto", "zh-CN", "en"] as const, d.language),
     borderRadius: num(r.borderRadius, d.borderRadius, 0, 30),
     opacity: num(r.opacity, d.opacity, 0, 100),
     horizontalPosition: oneOf(r.horizontalPosition, ["left", "center", "right"] as const, d.horizontalPosition),
@@ -156,14 +264,38 @@ function normalizeSettings(raw: unknown): Settings {
     notificationAlert: bool(r.notificationAlert, d.notificationAlert),
     notificationAlertMs: num(r.notificationAlertMs, d.notificationAlertMs, 2000, 15000),
     notifyOnAlarm: bool(r.notifyOnAlarm, d.notifyOnAlarm),
+    systemNotification: bool(r.systemNotification, d.systemNotification),
+    // 音效：取值合法性交给 audio.ts 的 pickSource（未知 id 回退默认音，不会静默变哑）；
+    // 自定义音是 data URL，只挡明显异常的超大串（正常上传上限 400KB ≈ base64 533KB）
+    notificationSound: remapLegacyChoice(str(r.notificationSound, d.notificationSound), customSounds, "notification"),
+    alarmSound: remapLegacyChoice(str(r.alarmSound, d.alarmSound), customSounds, "alarm"),
+    customSounds,
+    hideOnFullscreen: bool(r.hideOnFullscreen, d.hideOnFullscreen),
+    fullscreenHideAnim: oneOf(
+      r.fullscreenHideAnim,
+      ["fade", "slide", "both"] as const,
+      d.fullscreenHideAnim
+    ),
+    // 快捷键：只保证是字符串（格式合法性交给 Rust parse_combo 判定并回报错误）
+    hotkeyQuit: str(r.hotkeyQuit, d.hotkeyQuit),
+    hotkeyToggle: str(r.hotkeyToggle, d.hotkeyToggle),
   };
 }
 
 /** 启动时从磁盘恢复设置（逐字段校验；缺字段/类型不符回退默认值；失败则整体用默认值） */
 export async function hydrateSettings(): Promise<void> {
+  // 自定义音效的音频本体在 sounds.json：先把它读进来，试听/播放才拿得到 data
+  await useCustomSounds.getState().load();
   try {
-    const saved = await diskStore.get<Partial<Settings>>(STORE_KEY);
-    useSettings.setState({ settings: normalizeSettings(saved) });
+    const saved = (await disk.read()) as Partial<Settings> | null;
+    const next = normalizeSettings(saved);
+    useSettings.setState({ settings: next });
+    // 旧版把音频本体写在 settings.json 里：搬进 sounds.json，并把 settings 侧重写成纯元数据
+    if (legacySoundData.length > 0) {
+      useCustomSounds.getState().migrate(legacySoundData);
+      legacySoundData = [];
+      persist(next);
+    }
   } catch {
     /* 无存储文件或插件不可用时保持默认值 */
   }

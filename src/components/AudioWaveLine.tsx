@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 
 /**
  * 音频可视化折线（模拟频谱，非真实 FFT）。
@@ -10,6 +10,10 @@ import { useEffect, useId, useRef, useState } from "react";
  * - **同屏可放多条**：amplitude / phase / thickness / opacityScale / mirror 用来
  *   把同一条折线调成"丝状"背景的不同层次（展开态音乐页用它铺 3 条）；
  *   渐变 id 用 useId 生成，避免多条实例共用同一个 <linearGradient> 定义。
+ *
+ * 性能：折线的 `points` 直接写 DOM（setAttribute），**不走 React state**。
+ * 30fps × 多实例若每帧 setState，会让整棵音乐页每秒重渲染 90 次；
+ * 这里只重绘两条 polyline 的属性，父组件零重渲染。
  */
 
 const POINTS = 48; // 采样点数量
@@ -64,24 +68,34 @@ export default function AudioWaveLine({
   opacityScale?: number;
   mirror?: boolean;
 }) {
-  const [points, setPoints] = useState(() => buildPoints(0, false, amplitude, phase));
+  const mainRef = useRef<SVGPolylineElement>(null);
+  const mirrorRef = useRef<SVGPolylineElement>(null);
   const rafRef = useRef<number | null>(null);
   const lastRef = useRef(0);
   // useId 会产出 ":r1:" 这类含冒号的 id，去掉冒号再拼进 url(#...) 更稳妥
   const gradId = `wave-${useId().replace(/:/g, "")}`;
 
+  // 首帧静态值（暂停态的形态），SSR/首次绘制就有内容
+  const initial = buildPoints(0, false, amplitude, phase);
+
   useEffect(() => {
+    const apply = (points: string) => {
+      mainRef.current?.setAttribute("points", points);
+      mirrorRef.current?.setAttribute("points", points);
+    };
+
     if (!playing) {
       // 暂停：静态低幅折线，不启动动画循环
-      setPoints(buildPoints(0, false, amplitude, phase));
+      apply(buildPoints(0, false, amplitude, phase));
       return;
     }
     const tick = (now: number) => {
       rafRef.current = window.requestAnimationFrame(tick);
       if (now - lastRef.current < FRAME_MS) return; // 限帧 ~30fps
       lastRef.current = now;
-      setPoints(buildPoints(now / 1000, true, amplitude, phase));
+      apply(buildPoints(now / 1000, true, amplitude, phase));
     };
+    apply(buildPoints(0, true, amplitude, phase));
     rafRef.current = window.requestAnimationFrame(tick);
     return () => {
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
@@ -110,7 +124,8 @@ export default function AudioWaveLine({
 
       {/* 主折线（颜色＝封面光晕色） */}
       <polyline
-        points={points}
+        ref={mainRef}
+        points={initial}
         fill="none"
         stroke={`url(#${gradId})`}
         strokeWidth={thickness}
@@ -123,7 +138,8 @@ export default function AudioWaveLine({
       {/* 低透明度镜像，制造"流动"层次 */}
       {mirror && (
         <polyline
-          points={points}
+          ref={mirrorRef}
+          points={initial}
           fill="none"
           stroke={color2}
           strokeOpacity={0.22 * opacityScale}

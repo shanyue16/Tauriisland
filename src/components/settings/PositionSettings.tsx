@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSettings } from "../../stores/settings";
+import { useI18n } from "../../i18n";
 import type { IslandStyle, HorizontalPosition } from "../../types";
 import { THEME_PRESETS } from "../../types";
 
@@ -16,19 +17,20 @@ import { THEME_PRESETS } from "../../types";
  *    窗口只动一次。顺带把落盘次数从"一次拖动几十次"降到一次。
  */
 
-const STYLES: { key: IslandStyle; label: string; hint: string }[] = [
-  { key: "floating", label: "悬浮胶囊", hint: "四角全圆，离屏幕顶边有间距" },
-  { key: "docked", label: "贴边挂角", hint: "顶部直角，紧贴屏幕顶边" },
+const STYLES: { key: IslandStyle; labelKey: string; hintKey: string }[] = [
+  { key: "floating", labelKey: "settings.position.styleFloating", hintKey: "settings.position.styleFloatingHint" },
+  { key: "docked", labelKey: "settings.position.styleDocked", hintKey: "settings.position.styleDockedHint" },
 ];
 
-const POSITIONS: { key: HorizontalPosition; label: string }[] = [
-  { key: "left", label: "靠左" },
-  { key: "center", label: "居中" },
-  { key: "right", label: "靠右" },
+const POSITIONS: { key: HorizontalPosition; labelKey: string }[] = [
+  { key: "left", labelKey: "settings.position.horizontalLeft" },
+  { key: "center", labelKey: "settings.position.horizontalCenter" },
+  { key: "right", labelKey: "settings.position.horizontalRight" },
 ];
 
 export default function PositionSettings() {
   const { settings, updateSettings } = useSettings();
+  const { t } = useI18n();
   const theme = THEME_PRESETS[settings.theme];
   const docked = settings.style === "docked";
 
@@ -70,11 +72,11 @@ export default function PositionSettings() {
 
   return (
     <div className="space-y-5">
-      <h3 className="text-[13px] font-semibold opacity-90">位置</h3>
+      <h3 className="text-[13px] font-semibold opacity-90">{t("settings.position.title")}</h3>
 
       {/* 岛样式（形态） */}
       <div>
-        <div className="text-[11px] opacity-60 mb-2">岛样式</div>
+        <div className="text-[11px] opacity-60 mb-2">{t("settings.position.islandStyle")}</div>
         <div className="grid grid-cols-2 gap-2">
           {STYLES.map((s) => (
             <button
@@ -88,9 +90,9 @@ export default function PositionSettings() {
                 color: theme.text,
               }}
             >
-              <div>{s.label}</div>
+              <div>{t(s.labelKey)}</div>
               <div className="text-[10px] mt-0.5" style={{ opacity: 0.5 }}>
-                {s.hint}
+                {t(s.hintKey)}
               </div>
             </button>
           ))}
@@ -99,7 +101,7 @@ export default function PositionSettings() {
 
       {/* 水平基准位置 */}
       <div>
-        <div className="text-[11px] opacity-60 mb-2">水平位置</div>
+        <div className="text-[11px] opacity-60 mb-2">{t("settings.position.horizontal")}</div>
         <div className="flex gap-1">
           {POSITIONS.map((p) => (
             <button
@@ -114,7 +116,7 @@ export default function PositionSettings() {
                 color: theme.text,
               }}
             >
-              {p.label}
+              {t(p.labelKey)}
             </button>
           ))}
         </div>
@@ -123,7 +125,7 @@ export default function PositionSettings() {
       {/* 水平微调 */}
       <div>
         <div className="flex justify-between text-[11px] mb-1.5">
-          <span className="opacity-60">水平微调</span>
+          <span className="opacity-60">{t("settings.position.offsetX")}</span>
           <span className="tabular-nums">
             {shownX > 0 ? `+${shownX}` : shownX}px
           </span>
@@ -138,15 +140,15 @@ export default function PositionSettings() {
           {...holdProps}
         />
         <div className="flex justify-between text-[10px] mt-0.5 opacity-40">
-          <span>左 200px</span>
-          <span>右 200px</span>
+          <span>{t("settings.position.offsetXMin")}</span>
+          <span>{t("settings.position.offsetXMax")}</span>
         </div>
       </div>
 
       {/* 垂直微调 */}
       <div>
         <div className="flex justify-between text-[11px] mb-1.5">
-          <span className="opacity-60">垂直微调</span>
+          <span className="opacity-60">{t("settings.position.offsetY")}</span>
           <span className="tabular-nums">{shownY}px</span>
         </div>
         <input
@@ -162,12 +164,12 @@ export default function PositionSettings() {
         />
         {docked ? (
           <div className="text-[10px] mt-1" style={{ opacity: 0.55 }}>
-            贴边挂角形态贴住屏幕顶边，不受垂直微调影响（该项对它无效）
+            {t("settings.position.dockedHint")}
           </div>
         ) : (
           <div className="flex justify-between text-[10px] mt-0.5 opacity-40">
-            <span>贴顶（默认 8px 间距）</span>
-            <span>下移 200px</span>
+            <span>{t("settings.position.offsetYMin")}</span>
+            <span>{t("settings.position.offsetYMax")}</span>
           </div>
         )}
       </div>
@@ -183,7 +185,7 @@ export default function PositionSettings() {
             cursor: "pointer",
           }}
         >
-          微调归零
+          {t("settings.position.reset")}
         </button>
       </div>
     </div>

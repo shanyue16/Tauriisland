@@ -12,6 +12,7 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import type { LyricLine } from "../types/lyrics";
 import { parseSyncedLrc } from "../utils/lrcParser";
+import { b64ToUtf8 } from "../utils/base64";
 
 const HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
 
@@ -49,13 +50,6 @@ function pickCover(items: KugouSearchItem[], best: KugouSearchItem): string | nu
   }
   if (best.album_id) return `https://imge.kugou.com/stdmusic/480/${best.album_id}.jpg`;
   return null;
-}
-
-/** base64 → UTF-8 文本（歌词内容是 UTF-8 的 LRC） */
-function b64ToUtf8(b64: string): string {
-  const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder("utf-8").decode(bytes);
 }
 
 /** 按「曲名 + 歌手」在酷狗搜索，返回最匹配的一首 */

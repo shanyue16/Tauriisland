@@ -30,13 +30,13 @@
  * 由「设置 → 歌曲 → 本地歌词接口」显示 —— 否则「没拿到逐字歌词」根本没法排查。
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useSettings } from "../../stores/settings";
 import type { LyricLine, LyricWord } from "../../types/lyrics";
 import { isSameArtist, isSameTrack, textMentionsTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
-import { recordLocalLyricStatus } from "./status";
 import { isNonLyricLine } from "./lyricNoise";
+import { lengthCompatible, num, requestJson, str } from "./shared";
+import { recordLocalLyricStatus } from "./status";
 
 const LOG = "[Folia]";
 
@@ -122,14 +122,6 @@ interface RawLyric {
   artist?: unknown;
 }
 
-function num(v: unknown): number | null {
-  return typeof v === "number" && isFinite(v) ? v : null;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
 /** 秒 → 播放坐标的毫秒。官方公式：`歌词时间 = 播放时间(秒) − offset/1000`，反解即加回 offset。 */
 function msOf(seconds: number, offsetMs: number): number {
   return Math.round(seconds * 1000) + offsetMs;
@@ -156,23 +148,15 @@ function readIdentity(raw: RawLyric, firstLineText: string): string | null {
 }
 
 /**
- * 歌词时长是否与我们的曲长相容 —— 「曲名对不上」时的第二个身份依据。
+ * 歌词时长是否与我们的曲长相容 —— 「曲名对不上」时的第二个身份依据（实现见 `./shared.ts`）。
  *
  * **为什么需要它**：歌词文件自带的标题（`lines[0]`）是**自由文本元数据**，
  * 实测会与播放器报的曲名不一致（同一首歌的另一种叫法），只看曲名会误杀 ——
  * 用户就永远拿不到逐字歌词。这不是该保守的地方，但也不能不设门槛。
  *
  * **为什么它可信**：歌词的时间轴是**按这一份录音**打出来的，所以「末行时间 vs 曲长」
- * 比曲名可靠得多。判据刻意不对称：
- * - **不能超**：歌词末行明显晚于曲终（+10s 以上）→ 这份歌词属于更长的录音，丢弃。
- * - **可以早**：尾奏/间奏常常没有人声，歌词比曲子短一截是常态，所以下限放得很松。
- * - 两侧缺任一个就不走这条路径（宁可不采用，也不冒险）。
+ * 比曲名可靠得多（nowplaying 那条路用的是同一个判据）。
  */
-function isLengthCompatible(gotSpanMs: number | undefined, wantMs: number | undefined): boolean {
-  if (!gotSpanMs || !wantMs) return false;
-  return gotSpanMs <= wantMs + 10_000 && gotSpanMs >= wantMs * 0.5;
-}
-
 type FetchResult =  | { kind: "ok"; raw: RawLyric | null }
   | { kind: "error"; detail: string };
 
@@ -182,24 +166,15 @@ type FetchResult =  | { kind: "ok"; raw: RawLyric | null }
  * 任何异常（abort / 半截 JSON / 连接被拒 / 被 ACL 挡）都归到 error。
  */
 async function requestLyric(endpoint: string, timeoutMs: number): Promise<FetchResult> {
-  const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const resp = await tauriFetch(endpoint, { signal: ctrl.signal });
-    if (!resp.ok) return { kind: "error", detail: `HTTP ${resp.status}` };
-    const json = (await resp.json()) as unknown;
-    // 200 + null 是官方定义的正常态：没在播 / 加载中 / 无歌词
-    if (json === null || typeof json !== "object") return { kind: "ok", raw: null };
-    return { kind: "ok", raw: json as RawLyric };
-  } catch (e) {
-    const name = e instanceof Error ? e.name : "";
-    return {
-      kind: "error",
-      detail: name === "AbortError" ? `超时 ${timeoutMs}ms` : (e instanceof Error ? e.message : String(e)),
-    };
-  } finally {
-    window.clearTimeout(timer);
+  const r = await requestJson(endpoint, timeoutMs);
+  if (r.kind === "http") return { kind: "error", detail: `HTTP ${r.status}` };
+  if (r.kind === "throw") {
+    return { kind: "error", detail: r.timedOut ? `超时 ${timeoutMs}ms` : r.message };
   }
+  const json = r.json;
+  // 200 + null 是官方定义的正常态：没在播 / 加载中 / 无歌词
+  if (json === null || typeof json !== "object") return { kind: "ok", raw: null };
+  return { kind: "ok", raw: json as RawLyric };
 }
 
 function mapWords(raw: unknown, offsetMs: number): LyricWord[] {
@@ -288,7 +263,7 @@ export async function fetchLyricsFromFolia(want: WantInfo): Promise<ProviderLyri
   // 同一首歌、歌词源叫法不同。只走路径 A 会把它整份丢掉。
   const lenient =
     selfCandidates.some((c) => isSameArtist(c, want)) &&
-    isLengthCompatible(gotSpanMs, want.durationMs);
+    lengthCompatible(gotSpanMs, want.durationMs);
 
   // —— 三种结果必须严格分开 ——
   // 之前把它们塞进同一个 mismatch 出口，结果**连误杀四首**，而且每次都得靠

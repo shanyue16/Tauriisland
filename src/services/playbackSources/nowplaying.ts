@@ -57,13 +57,13 @@
  * 只信 `title / author / duration / cover`。
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useSettings } from "../../stores/settings";
 import type { LyricLine, LyricWord } from "../../types/lyrics";
 import { parseSyncedLrc } from "../../utils/lrcParser";
 import { isSameArtist, isSameTrack, textMentionsTrack } from "../lyricsProviders/matcher";
 import type { Candidate, ProviderLyrics, WantInfo } from "../lyricsProviders/types";
 import { stripNoise } from "./lyricNoise";
+import { lengthCompatible, num, requestJson, str } from "./shared";
 import { stageMatchesTrack } from "./stage";
 import { recordNowPlayingStatus } from "./status";
 
@@ -105,14 +105,6 @@ interface RawLyric {
   karaokeLyric?: unknown;
 }
 
-function num(v: unknown): number | null {
-  return typeof v === "number" && isFinite(v) ? v : null;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
 /** 秒 → 毫秒（`/api/query` 的时间字段是秒，见文件头「单位不一致」） */
 function secToMs(v: unknown): number | null {
   const n = num(v);
@@ -144,18 +136,10 @@ type JsonResult = { kind: "ok"; json: unknown } | { kind: "error"; detail: strin
  * 任何异常（abort / 半截 JSON / 连接被拒 / 被 ACL 挡）都归到 error。
  */
 async function getJson(url: string, timeoutMs: number): Promise<JsonResult> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const resp = await tauriFetch(url, { method: "GET", signal: ctrl.signal });
-    if (!resp.ok) return { kind: "error", detail: `HTTP ${resp.status}` };
-    return { kind: "ok", json: await resp.json() };
-  } catch (e) {
-    const name = e instanceof Error ? e.name : "Error";
-    return { kind: "error", detail: name === "AbortError" ? `超时(${timeoutMs}ms)` : name };
-  } finally {
-    clearTimeout(timer);
-  }
+  const r = await requestJson(url, timeoutMs);
+  if (r.kind === "ok") return { kind: "ok", json: r.json };
+  if (r.kind === "http") return { kind: "error", detail: `HTTP ${r.status}` };
+  return { kind: "error", detail: r.timedOut ? `超时(${timeoutMs}ms)` : r.name };
 }
 
 // ————————————————————————————————————————————————————————————————
@@ -363,16 +347,6 @@ export function nowPlayingMatches(
 // 歌词（供 lyrics.ts 的级联）
 // ————————————————————————————————————————————————————————————————
 
-/** 歌词时长是否与我们的曲长相容 —— 「曲名对不上」时的第二个身份依据（同 Folia 的口径） */
-function isLengthCompatible(
-  gotSpanMs: number | undefined,
-  wantMs: number | undefined
-): boolean {
-  if (!gotSpanMs || !wantMs) return false;
-  // 刻意不对称：**不能超**（+10s 以上属于更长的录音）、**可以早**（尾奏无人声是常态）
-  return gotSpanMs <= wantMs + 10_000 && gotSpanMs >= wantMs * 0.5;
-}
-
 /** `李佳薇` / `李佳薇/张碧晨` / `李佳薇、张碧晨` / `李佳薇 feat. 张碧晨` → 歌手数组 */
 function splitArtists(author: string): string[] {
   return author
@@ -532,7 +506,7 @@ export async function fetchLyricsFromNowPlaying(want: WantInfo): Promise<Provide
   }
 
   // ④ 路径 B：歌手强匹配 + 时长相容（曲名是自由文本，实测会与播放器报的不一致）
-  if (anyArtistMatches(got.artists, want.artist) && isLengthCompatible(spanMs, want.durationMs)) {
+  if (anyArtistMatches(got.artists, want.artist) && lengthCompatible(spanMs, want.durationMs)) {
     recordNowPlayingStatus({
       ...base,
       outcome: "ok",

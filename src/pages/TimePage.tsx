@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useI18n } from "../i18n";
 
 export default function TimePage() {
+  const { t } = useI18n();
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -12,8 +14,12 @@ export default function TimePage() {
   const mm = now.getMinutes().toString().padStart(2, "0");
   const ss = now.getSeconds().toString().padStart(2, "0");
 
-  const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-  const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
+  const weekday = t(`time.weekday.${now.getDay()}`);
+  const dateStr = t("time.date", {
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+    day: now.getDate(),
+  });
 
   return (
     // 内边距口径（悬浮态三个页统一）：垂直 py-1 = 线框稿 mini 规格的 4px；
@@ -30,7 +36,7 @@ export default function TimePage() {
         <span className="text-[13px] opacity-50" style={{ marginLeft: 11 }}>{ss}</span>
       </div>
       <div className="text-[10px] opacity-60 mt-0.5">
-        {dateStr} · {weekdays[now.getDay()]}
+        {dateStr} · {weekday}
       </div>
     </div>
   );

@@ -20,6 +20,20 @@ const LOCAL_LYRIC_RETRY_MS = 5000;
 const LOCAL_LYRIC_MAX_TRIES = 24;
 
 const lyricsCache = new Map<string, LyricsResult>();
+/**
+ * 歌词缓存上限（LRU）：避免长期使用后 Map 无限膨胀。
+ * set 时若超过上限，删除最早插入的键（Map 迭代序 = 插入序，先 set 的最先被删）。
+ */
+const LYRICS_CACHE_LIMIT = 120;
+function cacheLyrics(key: string, value: LyricsResult): void {
+  if (lyricsCache.has(key)) lyricsCache.delete(key); // 重新插入，让该键排到最新
+  lyricsCache.set(key, value);
+  while (lyricsCache.size > LYRICS_CACHE_LIMIT) {
+    const oldest = lyricsCache.keys().next().value;
+    if (oldest === undefined) break;
+    lyricsCache.delete(oldest);
+  }
+}
 const itunesCoverCache = new Map<string, string>();
 /** 酷狗专辑封面缓存（按 track key）——换回同一首时必须能从这里恢复 */
 const kugouCoverCache = new Map<string, string>();
@@ -425,7 +439,7 @@ export function useMusic() {
       // 时长要沿用之前那个源给的：本地源不提供时长，别把它抹成 null
       // （酷狗这类不上报时间线的播放器全靠它撑进度条）
       const prev = lyricsCache.get(key);
-      lyricsCache.set(key, {
+      cacheLyrics(key, {
         lines: hit.lines,
         duration: prev?.duration ?? null,
         provider: "folia",
@@ -508,7 +522,7 @@ export function useMusic() {
         durationMs: wantDurationMs,
       });
       if (result && result.lines.length > 0) {
-        lyricsCache.set(key, result);
+        cacheLyrics(key, result);
         lyricsRef.current = result.lines;
         setLyrics(result.lines);
         if (result.duration && result.duration > 0) {

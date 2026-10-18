@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNotifications, formatRelativeTime } from "../hooks/useNotifications";
 import { useSettings } from "../stores/settings";
+import { useI18n } from "../i18n";
+import { useInnerScroll } from "../hooks/useInnerScroll";
+import { lineClampStyle } from "../utils/text";
 import type { NotificationItem } from "../types/notification";
 
 /**
@@ -59,13 +62,17 @@ function appChipStyle(name: string, isDark: boolean): React.CSSProperties {
   };
 }
 
+/** 收起时 2 行截断，展开时不截断（见 utils/text.ts） */
+const collapsedClamp = 2;
+
 interface NotificationPageProps {
   /** 展开态当前页是否是通知页（三页同时 mounted，不 gate 住会一直读盘） */
   visible?: boolean;
 }
 
 export default function NotificationPage({ visible = true }: NotificationPageProps) {
-  const { settings, updateSettings, setState } = useSettings();
+  const { settings, setState } = useSettings();
+  const { t } = useI18n();
   const { items, allItems, loading } = useNotifications({ visible });
   // chip 的色相派生亮度是唯一需要按主题分支的地方，其余一律走 CSS 变量
   const isDark = settings.theme !== "light";
@@ -79,25 +86,8 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
 
   const shown = items.filter((it) => !cleared.has(it.id));
 
-  // 列表两端吞掉滚轮，避免"想滚列表却翻了页"
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      const dir = e.deltaY > 0 ? 1 : -1;
-      const atTop = el.scrollTop <= 0;
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-      const canScroll = !(dir > 0 ? atBottom : atTop);
-      if (canScroll) {
-        // 还能滚：吃掉事件，岛根节点不会再翻页
-        e.stopPropagation();
-      } else {
-        // 已到端：也吃掉，避免"边界抖动"，翻页交给岛根节点（不 stopPropagation）
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: true });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [shown.length]);
+  // 列表两端吞掉滚轮，避免"想滚列表却翻了页"（条目数变化后高度会变，重绑一次）
+  useInnerScroll(listRef, [shown.length]);
 
   const toggleExpanded = (id: number) =>
     setExpandedIds((prev) => {
@@ -111,9 +101,9 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
   if (!settings.notificationsEnabled) {
     return (
       <EmptyState
-        title="通知读取已关闭"
-        hint="开启后这里会显示系统通知"
-        action={{ label: "去设置", onClick: () => setState("maximal") }}
+        title={t("notification.disabledTitle")}
+        hint={t("notification.disabledHint")}
+        action={{ label: t("notification.goSettings"), onClick: () => setState("maximal") }}
       />
     );
   }
@@ -122,11 +112,11 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
   if (shown.length === 0) {
     return (
       <EmptyState
-        title={loading && allItems.length === 0 ? "读取中…" : "暂无通知"}
+        title={loading && allItems.length === 0 ? t("notification.loading") : t("notification.empty")}
         hint={
           loading && allItems.length === 0
             ? undefined
-            : "若刚收到通知却未显示，请检查专注助手 / 请勿打扰"
+            : t("notification.emptyHint")
         }
       />
     );
@@ -153,7 +143,7 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
           className="text-[10px] tabular-nums"
           style={{ color: "var(--island-text-muted)", letterSpacing: 0.3 }}
         >
-          通知
+          {t("notification.pageTitle")}
           <span style={{ opacity: 0.55, marginLeft: 6 }}>{shown.length}</span>
         </span>
         <button
@@ -173,7 +163,7 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
             (e.currentTarget.style.color = "var(--island-text-muted)")
           }
         >
-          全部清除
+          {t("notification.clearAll")}
         </button>
       </div>
 
@@ -183,9 +173,10 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
         className="flex-1 overflow-y-auto"
         style={{ padding: "6px 18px 14px", overscrollBehavior: "contain" }}
       >
-        {shown.map((item) => (
+        {shown.map((item, index) => (
           <Row
             key={item.id}
+            index={index}
             item={item}
             isDark={isDark}
             expandedText={expandedIds.has(item.id)}
@@ -198,16 +189,20 @@ export default function NotificationPage({ visible = true }: NotificationPagePro
 }
 
 function Row({
+  index,
   item,
   isDark,
   expandedText,
   onToggleText,
 }: {
+  /** 列表内行序，只用于入场动画的错落延迟 */
+  index: number;
   item: NotificationItem;
   isDark: boolean;
   expandedText: boolean;
   onToggleText: () => void;
 }) {
+  const { t } = useI18n();
   // 判定是否真的被截断：只有截断了才需要"展开"提示
   const hasBody = Boolean(item.body);
   const isLong = `${item.title}${item.body}`.length > 60 || item.body.includes("\n");
@@ -219,8 +214,13 @@ function Row({
 
   return (
     <div
-      className="flex gap-[9px]"
-      style={{ position: "relative", padding: "9px 0 10px" }}
+      className="row-in flex gap-[9px]"
+      style={{
+        position: "relative",
+        padding: "9px 0 10px",
+        // 新到的最上面几条依次淡入（最多叠到 5 行），旧条目 key 不变不会重播
+        animationDelay: `calc(${Math.min(index, 5) * 18}ms * var(--motion-factor, 1))`,
+      }}
     >
       {/* 应用 chip：密集列表里唯一的扫读锚点（同应用永远同色） */}
       <div style={appChipStyle(item.appName, isDark)} aria-hidden>
@@ -248,20 +248,14 @@ function Row({
         <div
           onClick={isLong ? onToggleText : undefined}
           style={{ cursor: isLong ? "pointer" : "default" }}
-          data-tip={isLong ? (expandedText ? "点击收起" : "点击展开全文") : undefined}
+          data-tip={isLong ? (expandedText ? t("notification.clickCollapse") : t("notification.clickExpand")) : undefined}
         >
           {/* 标题是焦点：纯白、常规字重（不用 bold 堆重量，靠对比度建立层级） */}
           <div
             className="text-[12px] leading-[1.35]"
-            style={{
-              display: expandedText ? "block" : "-webkit-box",
-              WebkitLineClamp: expandedText ? undefined : 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-              wordBreak: "break-word",
-            }}
+            style={lineClampStyle(expandedText ? null : collapsedClamp)}
           >
-            {item.title || "（无标题）"}
+            {item.title || t("common.noTitle")}
           </div>
 
           {/* 正文（可能为空 —— 部分通知只有标题） */}
@@ -270,11 +264,7 @@ function Row({
               className="text-[11px] leading-[1.4] mt-[2px]"
               style={{
                 color: "var(--island-text-muted)",
-                display: expandedText ? "block" : "-webkit-box",
-                WebkitLineClamp: expandedText ? undefined : 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-                wordBreak: "break-word",
+                ...lineClampStyle(expandedText ? null : collapsedClamp),
                 whiteSpace: "pre-wrap",
               }}
             >
@@ -299,7 +289,7 @@ function Row({
               opacity: 0.9,
             }}
           >
-            {expandedText ? "收起" : "展开全文"}
+            {expandedText ? t("notification.collapse") : t("notification.expand")}
           </button>
         )}
       </div>

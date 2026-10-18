@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Tauriisland",
-  "version": "26.10.11-1",
+  "version": "26.10.1205",
   "identifier": "com.tauriisland.app",
   "build": {
     "frontendDist": "../dist",
@@ -28,7 +28,8 @@
         "minWidth": 100,
         "minHeight": 20,
         "maxWidth": 600,
-        "maxHeight": 320
+        "maxHeight": 320,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {
@@ -37,7 +38,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "msi"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,6 +46,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "languages": ["SimpChinese", "English"],
+        "template": "nsis/installer.nsi"
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -37,9 +37,9 @@
  * 调用方静默沿用现有 SMTC 逻辑（界面与没有这个功能时**完全一致**）。
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { useSettings } from "../../stores/settings";
 import { norm } from "../lyricsProviders/matcher";
+import { num, requestJson, str } from "./shared";
 import { recordStageStatus } from "./status";
 
 const LOG = "[Stage]";
@@ -103,14 +103,6 @@ function readConfig(): StageConfig {
   };
 }
 
-function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
 /** 归一化后互相包含 —— 太短的（<2 字）不算，避免「你」「我」这种假命中 */
 function contains(a: string, b: string): boolean {
   const na = norm(a);
@@ -151,50 +143,41 @@ type FetchOutcome =
 async function requestStatus(cfg: StageConfig): Promise<FetchOutcome> {
   if (!cfg.token) return { kind: "unauthorized" };
 
-  const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), cfg.timeoutMs);
   const url = `${cfg.endpoint.replace(/\/+$/, "")}/stage/player/status`;
-  try {
-    const resp = await tauriFetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${cfg.token}` },
-      signal: ctrl.signal,
-    });
-    if (resp.status === 401 || resp.status === 403) return { kind: "unauthorized" };
-    if (!resp.ok) return { kind: "error", detail: `HTTP ${resp.status}` };
-    const json = (await resp.json()) as unknown;
-    if (json === null || typeof json !== "object") return { kind: "ok", snap: null };
-    const root = json as Record<string, unknown>;
-    const cur = (root.current ?? null) as Record<string, unknown> | null;
-    if (!cur || !str(cur.title)) return { kind: "ok", snap: null };
-
-    const caps = (root.controlCapabilities ?? {}) as Record<string, unknown>;
-    return {
-      kind: "ok",
-      snap: {
-        title: str(cur.title) || null,
-        artist: str(cur.artist) || null,
-        album: str(cur.album) || null,
-        source: str(cur.source) || null,
-        durationMs: num(root.durationMs) ?? num(cur.durationMs) ?? 0,
-        positionMs: num(root.positionMs) ?? 0,
-        sampledAtMs: num(root.sampledAtMs) ?? 0,
-        playerState: str(root.playerState) || null,
-        controlCapabilities: Object.entries(caps)
-          .filter(([, v]) => v === true)
-          .map(([k]) => k),
-      },
-    };
-  } catch (e) {
-    const name = e instanceof Error ? e.name : "";
-    return {
-      kind: "error",
-      detail:
-        name === "AbortError" ? `超时 ${cfg.timeoutMs}ms` : e instanceof Error ? e.message : String(e),
-    };
-  } finally {
-    window.clearTimeout(timer);
+  const r = await requestJson(url, cfg.timeoutMs, {
+    headers: { Authorization: `Bearer ${cfg.token}` },
+  });
+  if (r.kind === "http") {
+    if (r.status === 401 || r.status === 403) return { kind: "unauthorized" };
+    return { kind: "error", detail: `HTTP ${r.status}` };
   }
+  if (r.kind === "throw") {
+    return { kind: "error", detail: r.timedOut ? `超时 ${cfg.timeoutMs}ms` : r.message };
+  }
+
+  const json = r.json;
+  if (json === null || typeof json !== "object") return { kind: "ok", snap: null };
+  const root = json as Record<string, unknown>;
+  const cur = (root.current ?? null) as Record<string, unknown> | null;
+  if (!cur || !str(cur.title)) return { kind: "ok", snap: null };
+
+  const caps = (root.controlCapabilities ?? {}) as Record<string, unknown>;
+  return {
+    kind: "ok",
+    snap: {
+      title: str(cur.title) || null,
+      artist: str(cur.artist) || null,
+      album: str(cur.album) || null,
+      source: str(cur.source) || null,
+      durationMs: num(root.durationMs) ?? num(cur.durationMs) ?? 0,
+      positionMs: num(root.positionMs) ?? 0,
+      sampledAtMs: num(root.sampledAtMs) ?? 0,
+      playerState: str(root.playerState) || null,
+      controlCapabilities: Object.entries(caps)
+        .filter(([, v]) => v === true)
+        .map(([k]) => k),
+    },
+  };
 }
 
 /**
@@ -302,46 +285,40 @@ export async function sendStageControl(
     body.positionMs = Math.max(0, Math.floor(positionMs ?? 0));
   }
 
-  const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(), cfg.timeoutMs);
-  try {
-    const resp = await tauriFetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${cfg.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
+  const r = await requestJson(url, cfg.timeoutMs, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
-    if (!resp.ok) {
-      // 4xx = 明确拒绝（没生效）；5xx = 结果未知
-      const rejected = resp.status >= 400 && resp.status < 500;
-      let detail = `HTTP ${resp.status}`;
+  if (r.kind === "http") {
+    // 4xx = 明确拒绝（没生效）；5xx = 结果未知
+    const rejected = r.status >= 400 && r.status < 500;
+    let detail = `HTTP ${r.status}`;
+    if (r.bodyText) {
       try {
-        const err = (await resp.json()) as { error?: unknown; code?: unknown };
+        const err = JSON.parse(r.bodyText) as { error?: unknown; code?: unknown };
         const code = typeof err?.code === "string" ? err.code : "";
         const msg = typeof err?.error === "string" ? err.error : "";
-        if (code || msg) detail = `${resp.status} ${code || msg}`;
+        if (code || msg) detail = `${r.status} ${code || msg}`;
       } catch {
         /* 错误体不是 JSON 也无所谓 */
       }
-      console.info(`${LOG} 控制 ${action} 被拒：${detail}`);
-      return { ok: false, rejected, detail };
     }
-
-    const json = (await resp.json()) as { accepted?: unknown } | null;
-    if (json && json.accepted === true) return { ok: true };
-    // 200 但没 accepted:true —— 视为未生效，但**不**当作明确拒绝（写清楚了才知道发生了什么）
-    return { ok: false, rejected: false, detail: "响应里没有 accepted" };
-  } catch (e) {
-    const name = e instanceof Error ? e.name : "";
-    const detail =
-      name === "AbortError" ? `超时 ${cfg.timeoutMs}ms` : e instanceof Error ? e.message : String(e);
+    console.info(`${LOG} 控制 ${action} 被拒：${detail}`);
+    return { ok: false, rejected, detail };
+  }
+  if (r.kind === "throw") {
+    const detail = r.timedOut ? `超时 ${cfg.timeoutMs}ms` : r.message;
     console.info(`${LOG} 控制 ${action} 失败：${detail}`);
     return { ok: false, rejected: false, detail };
-  } finally {
-    window.clearTimeout(timer);
   }
+
+  const json = r.json as { accepted?: unknown } | null;
+  if (json && json.accepted === true) return { ok: true };
+  // 200 但没 accepted:true —— 视为未生效，但**不**当作明确拒绝（写清楚了才知道发生了什么）
+  return { ok: false, rejected: false, detail: "响应里没有 accepted" };
 }

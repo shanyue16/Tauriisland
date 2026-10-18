@@ -90,6 +90,25 @@ export const MOTION = {
   page: 160,
 } as const;
 
+/**
+ * 页切换的位移幅度（px）。
+ *
+ * 页的静止位移按 **位置关系** 算，而不是按"这次往哪个方向翻"：
+ * 索引在前的页停在上方（-PAGE_SHIFT），索引在后的页停在下方（+PAGE_SHIFT）。
+ * 于是向前翻时旧页本来就靠上、自然往上走，向后翻时相反 —— 同一个公式在两个方向上
+ * 都得到正确的运动方向，而且不需要记住"上一次翻向"（记住翻向的写法在无关重渲染时
+ * 会把方向清成 0，旧页会往回弹一下）。
+ */
+export const PAGE_SHIFT = 10;
+
+/** 四态的高低顺序：0 最小、3 设置面板。用于判断"这次是长大还是收小" */
+export const STATE_ORDER = {
+  minimal: 0,
+  medium: 1,
+  expanded: 2,
+  maximal: 3,
+} as const;
+
 /** 用户"动画速度"设置的倍率（以 normal 为 1） */
 export function speedFactor(speed: AnimationSpeed): number {
   return ANIMATION_DURATION[speed] / ANIMATION_DURATION.normal;

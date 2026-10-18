@@ -3,6 +3,10 @@ export type HorizontalPosition = "left" | "center" | "right";
 export type IslandState = "minimal" | "medium" | "expanded" | "maximal";
 export type AnimationSpeed = "slow" | "normal" | "fast";
 export type ThemeType = "dark" | "light";
+/** 语言设置：auto=跟随系统（navigator.language，非中/英回退中文），也可显式固定 */
+export type LanguageSetting = "auto" | "zh-CN" | "en";
+/** 全屏隐藏的动画方式："fade" 淡入淡出 / "slide" 滑入滑出 / "both" 两者同时 */
+export type FullscreenHideAnim = "fade" | "slide" | "both";
 
 // 主题预设色 — 参考 eIsland + Apple 设计语言
 export const THEME_PRESETS: Record<ThemeType, {
@@ -31,10 +35,35 @@ export const THEME_PRESETS: Record<ThemeType, {
   },
 };
 
+/**
+ * 一条用户自定义音效的**元数据**（存在 settings.json 里，很小）。
+ *
+ * 音频本体（data URL，单条可达数百 KB）另存 `sounds.json`，
+ * 否则每次改主题/位置等任意设置都要把整块音频重写一遍。
+ */
+export interface CustomSoundMeta {
+  /** 稳定 id，形如 `custom:<8位随机>`；被 notificationSound / alarmSound 引用 */
+  id: string;
+  /** 显示名（默认取上传时的文件名，可留空则显示「自定义音 N」） */
+  name: string;
+  /** 归属：通知音与闹钟音各自列出自己的条目 */
+  kind: "notification" | "alarm";
+  /** 原始字节数（只在 UI 上显示体积） */
+  size: number;
+}
+
+/** 一条完整的自定义音效（元数据 + 音频本体，存 `sounds.json`） */
+export interface CustomSound extends CustomSoundMeta {
+  /** 音频 data URL */
+  data: string;
+}
+
 export interface Settings {
   // 外观
   style: IslandStyle;
   theme: ThemeType;
+  /** 界面语言：auto 跟随系统（回退中文），或显式 zh-CN / en */
+  language: LanguageSetting;
   borderRadius: number; // 0-30px
   opacity: number; // 0-100, 0=全透明, 100=完全不透明
   horizontalPosition: HorizontalPosition;
@@ -157,11 +186,54 @@ export interface Settings {
    * 接入日程模块后由它读取本开关，届时再补调用方（见 docs/notifications-plan.md §3.7）。
    */
   notifyOnAlarm: boolean;
+  /** 是否向 Windows 推送系统通知（关掉＝只在岛内提醒，不发系统横幅） */
+  systemNotification: boolean;
+  /**
+   * 通知音效。取值为 `src/services/audio.ts` 里 `NOTIFICATION_SOUNDS` 的 id、
+   * `customSounds` 里某个条目的 id，或 `"none"`（静音）。
+   * 未知 id 会回退到默认音，不会静默变哑。
+   */
+  notificationSound: string;
+  /** 闹钟音效，口径同 notificationSound（取值来自 `ALARM_SOUNDS`） */
+  alarmSound: string;
+  /**
+   * 用户自定义音效库的**元数据**：可存多个、可删除，通知音与闹钟音各自按 `kind` 取用。
+   * 音频本体在 `sounds.json`（见 `src/stores/customSounds.ts`），这里只留 id/名字/体积，
+   * 保证 settings.json 不会因为音效而变大。
+   */
+  customSounds: CustomSoundMeta[];
+  /**
+   * 全屏隐藏（默认开）。
+   *
+   * 检测在 Rust 侧（`SHQueryUserNotificationState`，见 src-tauri/src/fullscreen.rs），
+   * 命中全屏游戏 / 全屏演示 / PPT 放映时把窗口 `hide()`，退出全屏后恢复并重设置顶。
+   * 这里只存开关；全屏期间新通知**只进列表、不弹提醒**（闹钟将来是唯一例外）。
+   */
+  hideOnFullscreen: boolean;
+  /**
+   * 全屏隐藏用哪种动画。两者是**独立的两条动画**，所以分开可选：
+   *   - `"fade"`  淡入淡出：窗口不动，整棵岛体 opacity 0↔1；
+   *   - `"slide"` 滑入滑出：窗口整体上滑出屏幕（getTargetPos 的收拢分支），完全不改透明度；
+   *   - `"both"`  两者同时跑（默认，也是本功能最初验收的形态）。
+   */
+  fullscreenHideAnim: FullscreenHideAnim;
+  /**
+   * 全局快捷键：退出应用（默认 "Alt+Z"）。
+   * 文本格式由 Rust 侧 hotkeys.rs parse_combo 解析："Alt+Shift+X" / "Ctrl+F1" 等；
+   * 注册失败（键被占用）走 `hotkey://error` 事件，前端设置页必须显示。
+   */
+  hotkeyQuit: string;
+  /**
+   * 全局快捷键：隐藏/显示灵动岛（默认 "Alt+C"）。
+   * 手动隐藏标记（MANUAL_HIDDEN）与全屏隐藏独立，全屏检测不会把快捷键藏起的岛抢回来。
+   */
+  hotkeyToggle: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   style: "floating",
   theme: "dark",
+  language: "auto",
   borderRadius: 24,
   opacity: 100,
   horizontalPosition: "center",
@@ -217,6 +289,24 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationAlert: true,
   notificationAlertMs: 5000,
   notifyOnAlarm: true,
+  /**
+   * 是否向 Windows 推送系统通知（默认开）。
+   * 关掉后应用内的提醒卡片/声音照旧，只是不再进系统通知中心 ——
+   * 适合「不想被系统横幅打断、只看岛」的用法。见 `src/services/notify.ts`。
+   */
+  systemNotification: true,
+  // 音效：默认用素材里的「简短提示音」与「alarm-clock-ringing」
+  notificationSound: "prompt-short",
+  alarmSound: "clock-ringing",
+  customSounds: [],
+
+  // 全屏隐藏：默认开（用户口径）
+  hideOnFullscreen: true,
+  // 默认两者同时跑，与最初验收的观感一致；只想看一种时去设置里改
+  fullscreenHideAnim: "both",
+  // 全局快捷键（用户口径：ALT+Z 退出应用、ALT+C 隐藏/显示）
+  hotkeyQuit: "Alt+Z",
+  hotkeyToggle: "Alt+C",
 };
 
 export const ANIMATION_DURATION: Record<AnimationSpeed, number> = {

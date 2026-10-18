@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { useSettings } from "../stores/settings";
 
 /**
  * 发送系统通知。
@@ -36,8 +37,12 @@ export interface NotifyOptions {
  *
  * **永不抛异常**：失败只返回 `false`（与 fetchMusic / 日历接口同一降级口径），
  * 调用方不需要 try/catch。
+ *
+ * 开关 `systemNotification`（设置页 · 通知 · 发送通知）关掉时**直接返回 false、不调 Rust**：
+ * 应用内的提醒卡片与提示音不受影响，只是不再进 Windows 通知中心。
  */
 export async function sendNotification(opts: NotifyOptions): Promise<boolean> {
+  if (!useSettings.getState().settings.systemNotification) return false;
   try {
     await invoke("send_notification", {
       title: opts.title,

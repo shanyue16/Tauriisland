@@ -1,4 +1,6 @@
 import type { Ref } from "react";
+import { useI18n } from "../i18n";
+import { lineClampStyle } from "../utils/text";
 import type { NotificationItem } from "../types/notification";
 
 /**
@@ -23,6 +25,7 @@ interface NotificationAlertProps {
 }
 
 export default function NotificationAlert({ item, ref }: NotificationAlertProps) {
+  const { t } = useI18n();
   const muted = "var(--island-text-muted)";
 
   return (
@@ -56,22 +59,16 @@ export default function NotificationAlert({ item, ref }: NotificationAlertProps)
             className="text-[10px] shrink-0 tabular-nums"
             style={{ color: muted, opacity: 0.7 }}
           >
-            刚刚
+            {t("common.justNow")}
           </span>
         </div>
 
         {/* 标题：最多 3 行，超出才截断（短标题不会占满） */}
         <div
           className="text-[13px] leading-[1.3] font-medium"
-          style={{
-            display: "-webkit-box",
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            wordBreak: "break-word",
-          }}
+          style={lineClampStyle(3)}
         >
-          {item.title || "（无标题）"}
+          {item.title || t("common.noTitle")}
         </div>
 
         {/* 正文：最多 4 行 */}
@@ -80,11 +77,7 @@ export default function NotificationAlert({ item, ref }: NotificationAlertProps)
             className="text-[11px] leading-[1.4] mt-1"
             style={{
               color: muted,
-              display: "-webkit-box",
-              WebkitLineClamp: 4,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-              wordBreak: "break-word",
+              ...lineClampStyle(4),
             }}
           >
             {item.body}

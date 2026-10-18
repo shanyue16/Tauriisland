@@ -8,6 +8,7 @@
 
 import { fetch } from "@tauri-apps/plugin-http";
 import { cleanArtist, cleanTitle, parseSyncedLrc } from "../../utils/lrcParser";
+import { b64ToUtf8 } from "../../utils/base64";
 import { pickBest } from "./matcher";
 import type { Candidate, ProviderLyrics } from "./types";
 
@@ -16,16 +17,6 @@ const QQ_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
-
-function b64ToUtf8(b64: string): string {
-  try {
-    const bin = atob(b64);
-    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
-  } catch {
-    return "";
-  }
-}
 
 /** 主搜索接口（page 1 → page 2 由调用方控制） */
 async function searchPrimary(query: string, page: string): Promise<Candidate[]> {

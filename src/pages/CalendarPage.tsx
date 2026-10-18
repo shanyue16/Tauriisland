@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetch } from "@tauri-apps/plugin-http";
+import { useI18n } from "../i18n";
+import { useScheduleStore } from "../stores/schedule";
+import type { Occurrence } from "../types/schedule";
+import { endOfDay, toLocalDateKey } from "../utils/recurrence";
+import { formatHm } from "../utils/format";
 
 /**
  * 日历页 —— 左侧「单日卡片」+ 右侧「月历网格」，带农历 / 节气 / 节假日。
@@ -16,8 +21,24 @@ import { fetch } from "@tauri-apps/plugin-http";
  * 接口失败一律优雅降级（只显示公历），不报错、不空白；结果按「月 / 日」缓存避免重复请求。
  */
 
-const WEEKDAY_HEAD = ["一", "二", "三", "四", "五", "六", "日"];
-const WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const WEEKDAY_HEAD: { key: string }[] = [
+  { key: "calendar.weekdayShort.0" },
+  { key: "calendar.weekdayShort.1" },
+  { key: "calendar.weekdayShort.2" },
+  { key: "calendar.weekdayShort.3" },
+  { key: "calendar.weekdayShort.4" },
+  { key: "calendar.weekdayShort.5" },
+  { key: "calendar.weekdayShort.6" },
+];
+const WEEKDAY_CN: { key: string }[] = [
+  { key: "calendar.weekdayFull.0" },
+  { key: "calendar.weekdayFull.1" },
+  { key: "calendar.weekdayFull.2" },
+  { key: "calendar.weekdayFull.3" },
+  { key: "calendar.weekdayFull.4" },
+  { key: "calendar.weekdayFull.5" },
+  { key: "calendar.weekdayFull.6" },
+];
 const MS_PER_DAY = 86400000;
 
 // ===== 配色常量（集中定义便于日后换肤；能走主题变量的都走变量）=====
@@ -207,7 +228,6 @@ function isRest(info: UapiDay | null | undefined): boolean {
 function isAdjustedWorkday(info: UapiDay | null | undefined): boolean {
   return info?.legal_holiday_type === "workday_adjust";
 }
-
 /**
  * 月视图网格是否显示「休」徽标的口径：
  * 只在**有法定节假日语义**的休息日显示（legal_holiday_type==="rest" 或有 legal_holiday_name），
@@ -251,7 +271,15 @@ function dayOfYear(d: Date): number {
   return Math.round((d.getTime() - start.getTime()) / MS_PER_DAY) + 1;
 }
 
-export default function CalendarPage({ visible = true }: { visible?: boolean }) {
+export default function CalendarPage({
+  visible = true,
+  onOpenSchedule,
+}: {
+  visible?: boolean;
+  /** 双击某天 / 点「当日日程」块时跳到日程页并定位到那天 */
+  onOpenSchedule?: (date: Date) => void;
+}) {
+  const { t } = useI18n();
   const today = useRef(new Date()).current;
   const [cursor, setCursor] = useState(() => ({
     year: today.getFullYear(),
@@ -313,6 +341,37 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
     [cursor.year, cursor.month]
   );
 
+  // ── 日程叠加层 ─────────────────────────────────────────
+  // 圆点与左卡列表都从这里取：`scheduleEvents` 只当"变更信号"用，
+  // 真正的展开结果由 store 现算（重复规则 + 单次例外都在 expandEvent 里）。
+  const scheduleEvents = useScheduleStore((s) => s.events);
+  const scheduleLoaded = useScheduleStore((s) => s.loaded);
+  const loadSchedule = useScheduleStore((s) => s.load);
+
+  useEffect(() => {
+    if (!scheduleLoaded) void loadSchedule();
+  }, [scheduleLoaded, loadSchedule]);
+
+  /** 当月每天有哪些日程（跨天事件归到开始日，与日程页同口径） */
+  const monthOccurrences = useMemo(() => {
+    const from = new Date(cursor.year, cursor.month, 1);
+    const to = endOfDay(new Date(cursor.year, cursor.month + 1, 0));
+    const buckets = new Map<string, Occurrence[]>();
+    for (const occ of useScheduleStore.getState().occurrencesInRange(from, to)) {
+      if (occ.cancelled) continue;
+      const key = toLocalDateKey(occ.start);
+      const list = buckets.get(key);
+      if (list) list.push(occ);
+      else buckets.set(key, [occ]);
+    }
+    return buckets;
+  }, [cursor.year, cursor.month, scheduleEvents]);
+
+  const selectedOccurrences = monthOccurrences.get(selectedKey) ?? [];
+
+  /** 双击判定（250ms 内同一格两次）：单击只选中，双击跳日程页 */
+  const lastClickRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+
   const shiftMonth = useCallback((delta: number) => {
     setCursor((c) => {
       const d = new Date(c.year, c.month + delta, 1);
@@ -356,7 +415,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
   // 左侧卡片展示内容（拿不到农历时只显示公历，不空白）
   const selDayNum = selected.day;
   const selWeekday =
-    dayInfo?.weekday_cn ?? WEEKDAY_CN[mondayIndex(new Date(selected.year, selected.month, selected.day))];
+    dayInfo?.weekday_cn ?? t(WEEKDAY_CN[mondayIndex(new Date(selected.year, selected.month, selected.day))].key);
   const selLunar = dayInfo
     ? `${dayInfo.lunar_month_name ?? ""}${dayInfo.lunar_day_name ?? ""}`
     : "";
@@ -374,6 +433,10 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
   const selDate = new Date(selected.year, selected.month, selected.day);
   const selWeekNo = isoWeek(selDate);
   const selDayNo = dayOfYear(selDate);
+
+  // 有日程时：**不删任何原有信息**（农历/节气/干支/年内进度都照旧），
+  // 只把整块内容收紧上移，日程接在下方 —— 用户口径「原内容上移，下方展示日程」。
+  const hasEvents = selectedOccurrences.length > 0;
 
   return (
     // 内边距口径 = 线框稿 expand 规格 `14px 18px`（与音乐详情页、通知页同一套）。
@@ -398,21 +461,21 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
         <div
           className="tabular-nums leading-none"
           style={{
-            fontSize: 46,
+            fontSize: hasEvents ? 38 : 46,
             fontWeight: 600,
-            marginTop: 2,
+            marginTop: hasEvents ? 0 : 2,
             color: isRest(dayInfo) ? HOLIDAY_COLOR : color,
           }}
         >
           {pad2(selDayNum)}
         </div>
         {selLunar && (
-          <div className="text-[11px] truncate max-w-full" style={{ marginTop: 7, color: TEXT_PRIMARY, opacity: 0.8 }}>
+          <div className="text-[11px] truncate max-w-full" style={{ marginTop: hasEvents ? 3 : 7, color: TEXT_PRIMARY, opacity: 0.8 }}>
             {selLunar}
           </div>
         )}
         {selFestival && (
-          <div className="text-[10px] truncate max-w-full" style={{ marginTop: 5, color: "var(--island-accent)" }}>
+          <div className="text-[10px] truncate max-w-full" style={{ marginTop: hasEvents ? 2 : 5, color: "var(--island-accent)" }}>
             {selFestival}
           </div>
         )}
@@ -420,7 +483,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
           <div
             className="text-[10px] truncate max-w-full"
             style={{
-              marginTop: 8,
+              marginTop: hasEvents ? 5 : 8,
               padding: "3px 8px",
               borderRadius: 6,
               background: selBadge.tone === "rest" ? "var(--cal-rest-pill-bg)" : "var(--cal-work-pill-bg)",
@@ -430,14 +493,54 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             {selBadge.text}
           </div>
         )}
+        {/* 干支 / 年内进度：**有日程也照样显示**，只是间距收紧（用户口径：原内容上移，
+            日程接在下方；以前有日程就把这两行顶掉，日期那天看着像换了张卡）。 */}
         {selGanzhi && (
-          <div className="text-[9px] truncate max-w-full" style={{ marginTop: 10, color: muted, opacity: 0.5 }}>
+          <div className="text-[9px] truncate max-w-full" style={{ marginTop: hasEvents ? 6 : 10, color: muted, opacity: 0.5 }}>
             {selGanzhi}
           </div>
         )}
-        <div className="text-[9px] truncate max-w-full" style={{ marginTop: 4, color: muted, opacity: 0.38 }}>
-          第 {selWeekNo} 周 · 年内第 {selDayNo} 天
+        <div className="text-[9px] truncate max-w-full" style={{ marginTop: hasEvents ? 2 : 4, color: muted, opacity: 0.38 }}>
+          {t("calendar.weekOfYear", { week: selWeekNo, day: selDayNo })}
         </div>
+        {/* 当日日程（最多 3 条）。左卡只有 148px 宽，所以只给「时刻 + 标题」两列。 */}
+        {hasEvents && (
+          <button
+            type="button"
+            onClick={() => onOpenSchedule?.(selDate)}
+            title={t("calendar.openSchedule")}
+            className="w-full flex flex-col cursor-pointer"
+            style={{
+              marginTop: hasEvents ? 5 : 8,
+              gap: 2,
+              padding: "4px 5px",
+              borderRadius: 6,
+              background: "var(--sidebar-tab-hover)",
+              border: "none",
+              color: TEXT_PRIMARY,
+              textAlign: "left",
+            }}
+          >
+            {selectedOccurrences.slice(0, 3).map((occ) => (
+              <span key={`${occ.event.id}:${occ.occurrenceDate}`} className="flex items-baseline" style={{ gap: 4 }}>
+                <span
+                  className="tabular-nums shrink-0"
+                  style={{ fontSize: 8, color: muted, opacity: 0.8, width: 24 }}
+                >
+                  {occ.event.allDay ? t("calendar.allDayShort") : formatHm(occ.start)}
+                </span>
+                <span className="truncate" style={{ fontSize: 8.5, lineHeight: 1.35 }}>
+                  {occ.event.title}
+                </span>
+              </span>
+            ))}
+            {selectedOccurrences.length > 3 && (
+              <span className="truncate" style={{ fontSize: 8, color: muted, opacity: 0.75 }}>
+                {t("calendar.moreEvents", { count: selectedOccurrences.length - 3 })}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* ===== 右：月历 ===== */}
@@ -446,30 +549,30 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             （外观交给 SelectBox），前后月紧贴其右；「今天」只在偏离当前月时出现。
             原来是两个 11px 的裸下拉 + 18px 图标按钮，整行读起来像工具条而不是"标题"。 */}
         <div className="flex items-center shrink-0" style={{ height: 26 }}>
-          <NavButton label="上一月" onClick={() => shiftMonth(-1)}>
+          <NavButton label={t("calendar.prevMonth")} onClick={() => shiftMonth(-1)}>
             <path d="M15 5l-7 7 7 7" />
           </NavButton>
 
           <DropMenu
-            ariaLabel="选择年份"
+            ariaLabel={t("calendar.selectYear")}
             value={cursor.year}
             options={yearOptions}
-            format={(y) => `${y}年`}
+            format={(y) => t("calendar.yearFormat", { year: y })}
             visible={visible}
             onChange={(v) => jumpTo(v, cursor.month)}
           />
 
           <DropMenu
-            ariaLabel="选择月份"
+            ariaLabel={t("calendar.selectMonth")}
             value={cursor.month + 1}
             options={Array.from({ length: 12 }, (_, i) => i + 1)}
-            format={(m) => `${m}月`}
+            format={(m) => t("calendar.monthFormat", { month: m })}
             columns={3}
             visible={visible}
             onChange={(v) => jumpTo(cursor.year, v - 1)}
           />
 
-          <NavButton label="下一月" onClick={() => shiftMonth(1)}>
+          <NavButton label={t("calendar.nextMonth")} onClick={() => shiftMonth(1)}>
             <path d="M9 5l7 7-7 7" />
           </NavButton>
 
@@ -480,7 +583,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             <button
               type="button"
               onClick={goToday}
-              data-tip="回到今天"
+              data-tip={t("calendar.backToday")}
               data-tip-pos="bottom"
               className="text-[10px] leading-none px-2 py-1 rounded-[6px] cursor-pointer shrink-0 ml-1.5"
               style={{
@@ -496,7 +599,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                 e.currentTarget.style.background = "var(--sidebar-tab-hover)";
               }}
             >
-              今天
+              {t("calendar.today")}
             </button>
           )}
         </div>
@@ -508,7 +611,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
         >
           {WEEKDAY_HEAD.map((w, i) => (
             <div
-              key={w}
+              key={w.key}
               className="text-center"
               style={{
                 fontSize: 9.5,
@@ -516,7 +619,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                 opacity: i >= 5 ? 0.6 : 0.9,
               }}
             >
-              {w}
+              {t(w.key)}
             </div>
           ))}
         </div>
@@ -527,7 +630,8 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
               · 调休上班   → 副行显示「班」（琥珀色），代替那天的农历小字
               · 今天       → 蓝底白字；选中 → 蓝色发丝环 */}
         <div
-          className="grid flex-1 min-h-0"
+          key={`${cursor.year}-${cursor.month}`}
+          className="grid flex-1 min-h-0 panel-swap"
           style={{
             gridTemplateColumns: "repeat(7, 1fr)",
             gridTemplateRows: `repeat(${Math.max(cells.length / 7, 1)}, 1fr)`,
@@ -551,6 +655,21 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
             const sub = smallText(info);
             const rest = isLegalRest(info);
             const adjust = isAdjustedWorkday(info);
+            const dayDate = new Date(cursor.year, cursor.month, day);
+            const dayOccurrences = monthOccurrences.get(key) ?? [];
+
+            /** 单击选中；250ms 内同格第二次 = 双击 → 跳日程页. */
+            const handleCellClick = () => {
+              const stamp = Date.now();
+              const last = lastClickRef.current;
+              setSelected({ year: cursor.year, month: cursor.month, day });
+              if (last.key === key && stamp - last.at <= 250) {
+                lastClickRef.current = { key: "", at: 0 };
+                onOpenSchedule?.(dayDate);
+                return;
+              }
+              lastClickRef.current = { key, at: stamp };
+            };
 
             // 今天：蓝底白字；选中：蓝色发丝环（今天同时被选中则蓝底 + 外描边/发光）
             const restBg = REST_CELL_BG;
@@ -566,7 +685,7 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
               <button
                 key={key}
                 type="button"
-                onClick={() => setSelected({ year: cursor.year, month: cursor.month, day })}
+                onClick={handleCellClick}
                 className="cal-cell relative flex flex-col items-center justify-center rounded-[6px] cursor-pointer overflow-hidden"
                 style={{
                   background: boxBackground,
@@ -619,9 +738,35 @@ export default function CalendarPage({ visible = true }: { visible?: boolean }) 
                 {/* 右上角角标（用户要求保留：一个月里哪几天休、哪几天调休上班要能一眼扫出来）
                     班 = 始终红底白字（今天那格是蓝底，红牌在蓝底上最清楚；用户反馈过
                     跟着格子变蓝底看不清）；休 = 蓝底蓝牌会隐形，所以今天那格改半透明黑底。 */}
-                {adjust && <CellChip text="班" background={BADGE_WORK_BG} />}
+                {adjust && <CellChip text={t("calendar.work")} background={BADGE_WORK_BG} />}
                 {!adjust && rest && (
-                  <CellChip text="休" background={isToday ? "rgba(0,0,0,0.42)" : ACCENT} />
+                  <CellChip text={t("calendar.rest")} background={isToday ? "rgba(0,0,0,0.42)" : ACCENT} />
+                )}
+
+                {/* 日程小圆点：放左上（右上是休/班角标），最多 3 个；
+                    全天事件用实心 accent，定时事件用半透明蓝，扫一眼能分清。
+                    今天那格是蓝底，圆点必须换成白/淡色，否则隐形。 */}
+                {dayOccurrences.length > 0 && (
+                  <span
+                    className="absolute flex items-center"
+                    style={{ top: 2, left: 2, gap: 1.5, pointerEvents: "none" }}
+                  >
+                    {dayOccurrences.slice(0, 3).map((occ, dotIndex) => (
+                      <span
+                        key={dotIndex}
+                        style={{
+                          width: 3,
+                          height: 3,
+                          borderRadius: 999,
+                          background: isToday
+                            ? ON_ACCENT
+                            : occ.event.allDay
+                              ? ACCENT
+                              : "rgba(10,132,255,0.55)",
+                        }}
+                      />
+                    ))}
+                  </span>
                 )}
               </button>
             );

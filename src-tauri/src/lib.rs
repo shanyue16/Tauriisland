@@ -3,10 +3,11 @@
 //! 架构变化：去掉了 Python sidecar，所有 SMTC 采集通过 Tauri command 暴露。
 //! LRCLIB 歌词获取由前端直接 fetch（capabilities 已放行）。
 
+mod fullscreen;
+mod hotkeys;
 mod notifications;
 mod smtc;
 
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
@@ -133,6 +134,38 @@ async fn send_notification(
     builder.show().map_err(|e| format!("发送通知失败: {}", e))
 }
 
+// ── 全屏隐藏 ────────────────────────────────────────────────
+
+/// 同步「全屏时隐藏」开关（前端设置变化时调用；应用启动时也会推一次）。
+///
+/// 关掉开关会立即把岛恢复出来 —— 用户在全屏里改设置的路径不存在，
+/// 但"关了开关却要等下一次全屏切换才回来"是不可接受的。
+#[tauri::command]
+fn set_fullscreen_hide(app: tauri::AppHandle, enabled: bool) {
+    fullscreen::set_enabled(&app, enabled);
+}
+
+/// 前端「出场动画」跑完后的确认 —— 真正把窗口收起来的是这一步。
+///
+/// 为什么不直接在检测线程里 hide：hide() 一步到位，窗口一消失就没有东西可以动效了。
+/// 所以改成「Rust 只发事件 → 前端播完动画回来确认 → Rust 才 hide」，
+/// 并配了一条截止兜底（fullscreen.rs 的 HIDE_DEADLINE_MS）。
+#[tauri::command]
+fn commit_fullscreen_hide(app: tauri::AppHandle) {
+    fullscreen::commit_hide(&app);
+}
+
+// ── 全局快捷键 ──────────────────────────────────────────────
+
+/// 注册/改键全局快捷键（前端启动时推默认值，改键时推新值）。
+///
+/// 失败不会让命令返回 Err —— 而是 emit `hotkey://error`，由设置页显示
+/// （键被其他程序占用这类问题用户必须看见，但不值得让前端 invoke 抛异常）。
+#[tauri::command]
+fn set_hotkeys(app: tauri::AppHandle, quit: String, toggle: String) {
+    hotkeys::register(&app, &quit, &toggle);
+}
+
 // ── 入口 ────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -153,6 +186,9 @@ pub fn run() {
             get_notifications,
             check_notifications,
             send_notification,
+            set_fullscreen_hide,
+            commit_fullscreen_hide,
+            set_hotkeys,
         ])
         .setup(move |app| {
             // 初始隐藏 → 防止窗口在 (0,0) 闪一下
@@ -179,6 +215,14 @@ pub fn run() {
             if let Err(e) = setup_tray(app.handle()) {
                 eprintln!("[tray] 托盘初始化失败（应用继续运行，可从任务栏图标以外的方式使用）: {e}");
             }
+
+            // 全屏隐藏：常驻检测线程。放在这里而不是 lazy 启动，是因为它必须从
+            // 第一秒就在看 —— 用户开游戏时不会先来点一下岛。
+            fullscreen::spawn_watcher(app.handle().clone());
+
+            // 全局快捷键：消息循环线程常驻。初始注册由前端启动时 invoke set_hotkeys
+            // 推默认值（与 set_fullscreen_hide 同一模式）——键位保存在前端 store 里。
+            hotkeys::spawn_listener(app.handle().clone());
 
             Ok(())
         })
@@ -212,8 +256,15 @@ pub fn run() {
     });
 }
 
-/// 用户主动退出（托盘「退出」）时置位：此后不再拦 ExitRequested、也不重建窗口。
+/// 用户主动退出（托盘「退出」/ 快捷键退出）时置位：此后不再拦 ExitRequested、也不重建窗口。
 static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// 主动退出入口：托盘「退出」与快捷键退出共用同一条路径。
+/// 先置位再退出：否则 ExitRequested 会拦下这次退出，窗口重建也会被触发。
+pub(crate) fn request_quit(app: &AppHandle) {
+    QUITTING.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
 
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItem::with_id(app, "show", "显示灵动岛", true, None::<&str>)?;
@@ -233,11 +284,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = window.hide();
                 }
             }
-            "quit" => {
-                // 先置位再退出：否则 ExitRequested 会拦下这次退出，窗口重建也会被触发
-                QUITTING.store(true, Ordering::SeqCst);
-                app.exit(0);
-            }
+            "quit" => request_quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -269,6 +316,15 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 /// 点了没反应的空操作 —— 用户只能重启应用。配合 `run()` 里的 `prevent_exit`，
 /// 岛被收走之后仍然可以从托盘找回。
 fn show_or_create_island(app: &AppHandle) {
+    // 全屏隐藏（含动画刚跑到一半）期间不响应：此时前端已把窗口滑到屏幕上方，
+    // show() 出来是一片看不见的区域，用户会以为托盘菜单坏了。
+    // 全屏结束或关掉开关时本模块自己会 restore，不需要这里插手。
+    if fullscreen::is_hiding() {
+        return;
+    }
+    // 快捷键手动隐藏期间的「显示」不需要在这里拦：toggle_island 走的是
+    // is_manual_hidden() 分支；托盘「显示」则视为用户意志，清除手动隐藏标记后照常显示。
+    hotkeys::clear_manual_hidden();
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -315,12 +371,4 @@ fn island_initial_pos(app: &AppHandle) -> (f64, f64) {
         return ((screen_w_logical - 220.0) / 2.0, 8.0);
     }
     (100.0, 8.0)
-}
-
-#[allow(dead_code)]
-fn _unused_project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf()
 }

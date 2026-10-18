@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetchNotifications } from "../services/notifications";
 import { useSettings } from "../stores/settings";
 import { isBlacklisted, type NotificationItem } from "../types/notification";
+import { formatHm } from "../utils/format";
 
 /**
  * 廉价变化探测的间隔。
@@ -136,7 +137,7 @@ export function formatRelativeTime(unixSeconds: number, now: number = Date.now()
 
   const d = new Date(then);
   const nowD = new Date(now);
-  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const hhmm = formatHm(d);
 
   const sameDay = (a: Date, b: Date) =>
     a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();

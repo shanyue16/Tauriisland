@@ -4303,7 +4303,7 @@ dependencies = [
 
 [[package]]
 name = "tauriisland"
-version = "26.10.11-1"
+version = "26.10.1205"
 dependencies = [
  "base64 0.22.1",
  "rusqlite",

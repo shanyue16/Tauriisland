@@ -610,7 +610,7 @@ pub fn get_music_info_blocking() -> Result<MusicInfo, String> {
 
     // ========== 封面: 缓存 + 延迟重试 ==========
     {
-        let mut cache = cover_cache_lock().lock().unwrap();
+        let cache = cover_cache_lock().lock().unwrap();
         let cache_hit = cache
             .as_ref()
             .map(|(t, a, _)| t == &track_key.0 && a == &track_key.1)
@@ -729,7 +729,7 @@ pub fn get_music_info_blocking() -> Result<MusicInfo, String> {
     };
 
     if same_track {
-        let mut last = last_music_lock().lock().unwrap();
+        let last = last_music_lock().lock().unwrap();
         if let Some(prev) = last.as_ref() {
             if !timeline_valid {
                 info.position = prev.position;

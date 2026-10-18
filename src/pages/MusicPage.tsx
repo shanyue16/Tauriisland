@@ -2,8 +2,10 @@ import type { MusicData } from "../types/music";
 import type { LyricLine } from "../types/lyrics";
 import { useCoverAccent } from "../hooks/useCoverAccent";
 import { useScrub } from "../hooks/useScrub";
+import { useI18n } from "../i18n";
 import { controlPlayback } from "../services/playbackControl";
 import { isStageControlActive } from "../services/playbackSources/stage";
+import { formatClock } from "../utils/format";
 
 interface MusicPageProps {
   data: MusicData | null;
@@ -12,6 +14,7 @@ interface MusicPageProps {
 }
 
 export default function MusicPage({ data }: MusicPageProps) {
+  const { t } = useI18n();
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
@@ -40,7 +43,7 @@ export default function MusicPage({ data }: MusicPageProps) {
         className="w-full h-full flex items-center justify-center py-1 px-[18px] pr-[26px]"
         style={{ color }}
       >
-        <div className="text-[11px] opacity-60">加载中...</div>
+        <div className="text-[11px] opacity-60">{t("music.loading")}</div>
       </div>
     );
   }
@@ -53,7 +56,7 @@ export default function MusicPage({ data }: MusicPageProps) {
       >
         <MusicIcon size={18} style={{ color, opacity: 0.35 }} />
         <div className="text-[10px] opacity-40 leading-tight text-center truncate max-w-full">
-          {data.diag ? `⚠ ${data.diag}` : "无活跃音乐"}
+          {data.diag ? `⚠ ${data.diag}` : t("music.noActive")}
         </div>
       </div>
     );
@@ -62,8 +65,8 @@ export default function MusicPage({ data }: MusicPageProps) {
   const seekable = duration > 0 && isStageControlActive();
   const posSec = scrub.scrubSec ?? (data.position || 0);
   const progress = duration > 0 ? Math.min((posSec / duration) * 100, 100) : 0;
-  const timeStr = formatTime(posSec);
-  const totalStr = duration > 0 ? formatTime(duration) : "—:—";
+  const timeStr = formatClock(posSec);
+  const totalStr = duration > 0 ? formatClock(duration) : "—:—";
 
   return (
     // 内边距口径与加载态/空态一致（垂直 py-1 = 线框稿 mini 规格 4px）；
@@ -98,30 +101,30 @@ export default function MusicPage({ data }: MusicPageProps) {
 
         <div className="flex-1 min-w-0 flex flex-col gap-[1px] text-left">
           <div className="text-[12px] font-medium leading-tight truncate">
-            {data.title || "未知曲目"}
+            {data.title || t("music.unknownTitle")}
           </div>
           <div
             className="text-[9.5px] leading-tight truncate"
             style={{ color: muted, opacity: 0.9 }}
           >
-            {data.artist || "未知艺术家"}
+            {data.artist || t("music.unknownArtist")}
           </div>
         </div>
 
         {/* 控件靠右。点击 stopPropagation：悬浮态整块可点（点了进展开态），
             不拦冒泡会让一次点击做两件事。只报语义动作，走 playbackControl 的路由。 */}
         <div className="flex items-center gap-[3px] shrink-0" style={{ marginLeft: "auto" }}>
-          <CtrlButton tip="上一首" onClick={() => controlPlayback("prev")}>
+          <CtrlButton tip={t("music.prev")} onClick={() => controlPlayback("prev")}>
             <PrevIcon size={12} />
           </CtrlButton>
           <CtrlButton
-            tip={data.playing ? "暂停" : "播放"}
+            tip={data.playing ? t("music.pause") : t("music.play")}
             width={22}
             onClick={() => controlPlayback("toggle")}
           >
             {data.playing ? <PauseIcon size={13} /> : <PlayIcon size={13} />}
           </CtrlButton>
-          <CtrlButton tip="下一首" onClick={() => controlPlayback("next")}>
+          <CtrlButton tip={t("music.next")} onClick={() => controlPlayback("next")}>
             <NextIcon size={12} />
           </CtrlButton>
         </div>
@@ -135,7 +138,7 @@ export default function MusicPage({ data }: MusicPageProps) {
         <div
           ref={scrub.barRef}
           className={`flex-1 min-w-0 h-[14px] flex items-center${seekable ? " cursor-pointer" : ""}`}
-          data-tip={seekable ? "点击或拖动可跳转" : undefined}
+          data-tip={seekable ? t("music.seekTip") : undefined}
           style={{ touchAction: "none" }}
           {...scrub.handlers}
         >
@@ -197,18 +200,12 @@ function CtrlButton({
   );
 }
 
-function formatTime(seconds: number): string {
-  if (!seconds || seconds <= 0) return "0:00";
-  // 与播放器一致：对秒数截断（floor）
-  const s = Math.floor(seconds);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
+/** 本页所有 SVG 图标共用同一 viewBox（Material 24px 网格） */
+const ICON_VIEWBOX = "0 0 24 24";
 
 function PlayIcon({ size = 14, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+    <svg width={size} height={size} viewBox={ICON_VIEWBOX} fill="currentColor" style={style}>
       <path d="M8 5v14l11-7z" />
     </svg>
   );
@@ -216,7 +213,7 @@ function PlayIcon({ size = 14, style }: { size?: number; style?: React.CSSProper
 
 function PauseIcon({ size = 14, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+    <svg width={size} height={size} viewBox={ICON_VIEWBOX} fill="currentColor" style={style}>
       <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
     </svg>
   );
@@ -224,7 +221,7 @@ function PauseIcon({ size = 14, style }: { size?: number; style?: React.CSSPrope
 
 function PrevIcon({ size = 13, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+    <svg width={size} height={size} viewBox={ICON_VIEWBOX} fill="currentColor" style={style}>
       <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
     </svg>
   );
@@ -232,7 +229,7 @@ function PrevIcon({ size = 13, style }: { size?: number; style?: React.CSSProper
 
 function NextIcon({ size = 13, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+    <svg width={size} height={size} viewBox={ICON_VIEWBOX} fill="currentColor" style={style}>
       <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
     </svg>
   );
@@ -240,7 +237,7 @@ function NextIcon({ size = 13, style }: { size?: number; style?: React.CSSProper
 
 function MusicIcon({ size = 14, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+    <svg width={size} height={size} viewBox={ICON_VIEWBOX} fill="currentColor" style={style}>
       <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
     </svg>
   );

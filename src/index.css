@@ -36,6 +36,18 @@
   --cal-work-pill-fg: #ffcf6b;
 }
 
+/* 悬浮提示（src/components/Hint.tsx）的出现动画：淡入 + 轻微上移 */
+@keyframes hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ⚠️ 这个 reset 必须写在 @layer base 里面。
    裸写（不套 @layer）的声明属于"未分层样式"，按 CSS 级联层规则**优先于任何 @layer**，
    而 Tailwind v4 的 utilities 全部在 `@layer utilities` 里 —— 结果就是 `* { padding: 0 }`
@@ -247,17 +259,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  /* 无障碍口径：去掉位移类运动，保留帮助理解状态变化的透明度过渡 */
-  .alert-layer,
-  .alert-layer-leaving,
-  .island-page {
-    transform: none;
-  }
-  .island-page {
-    transition: opacity 120ms linear;
-  }
-}
+/* 无障碍口径的"减少动态效果"覆盖统一放在文件末尾（见文末 REDUCED MOTION 段）：
+   放在这里会被后面同特异度的 .island-page 等规则覆盖掉，导致开关无效。 */
 
 /* ===== 岛内自绘 tooltip 的入场（IslandTooltip） =====
    只动 opacity：气泡的定位靠 transform，若这里也写 transform 会互相覆盖。 */
@@ -266,26 +269,94 @@ input[type="range"]::-webkit-slider-thumb:hover {
   to   { opacity: 1; }
 }
 
-/* ===== 分页容器（medium / expanded 三页共用，透明度 + 轻微位移过渡） ===== */
+/* ===== 分页容器（medium / expanded 共用，透明度 + 顺页序位移） =====
+   位移量由 JS 写进 transform（见 Island.tsx 的 PAGE_SHIFT）：索引在前的页停在上方、
+   在后的停在下方，所以向前/向后翻都是顺着页序滑，不需要记"上次翻向"。
+   这里只给**时长与曲线**，且进出不对称：旧页退场快（视线要立刻离开它），
+   新页入场稍慢一点（有"落位"的过程）。 */
 .island-page {
   position: absolute;
   inset: 0;
-  /* 页内换页：透明度用强 ease-out，位移用强 ease-in-out（屏幕内移动）；
-     时长同样跟随"动画速度"三挡（--motion-factor 由 Island.tsx 注入）。 */
-  transition:
-    opacity calc(160ms * var(--motion-factor, 1)) var(--ease-out),
-    transform calc(200ms * var(--motion-factor, 1)) var(--ease-in-out);
   will-change: opacity, transform;
 }
 .island-page-active {
   opacity: 1;
-  transform: translateY(0);
+  transition:
+    opacity calc(170ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(210ms * var(--motion-factor, 1)) var(--ease-in-out);
 }
 .island-page-inactive {
   opacity: 0;
-  transform: translateY(6px);
   pointer-events: none;
+  /* 退场比入场快：110/150 —— 换页时不会看到两页同时半透明地重叠 */
+  transition:
+    opacity calc(110ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(150ms * var(--motion-factor, 1)) var(--ease-in-out);
 }
+
+/* ===== 浮层入场（自绘下拉、导入预览等 portal 面板） =====
+   用 @starting-style + transition（而不是 keyframes）：面板要在"已挂载"的第一帧
+   从起始态过渡进来，从当前值重定向，关掉再开会重新播；keyframes 每次都要先重排。
+   浏览器不支持 @starting-style 时退化为"直接出现"，不影响可用性。 */
+.ui-popover {
+  transform: none;
+  opacity: 1;
+  transition:
+    opacity calc(140ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(160ms * var(--motion-factor, 1)) var(--ease-out);
+}
+@starting-style {
+  .ui-popover {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+}
+
+/* ===== 岛内覆盖层（日程编辑弹窗、导入确认） ===== */
+.overlay-pop {
+  transform: none;
+  opacity: 1;
+  transition:
+    opacity calc(150ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(180ms * var(--motion-factor, 1)) var(--ease-out);
+}
+@starting-style {
+  .overlay-pop {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* ===== 设置分区切换（SettingsPanel 里 key 变化 → 重挂载 → 起始态过渡） ===== */
+.panel-swap {
+  transform: none;
+  opacity: 1;
+  transition:
+    opacity calc(150ms * var(--motion-factor, 1)) var(--ease-out),
+    transform calc(170ms * var(--motion-factor, 1)) var(--ease-out);
+}
+@starting-style {
+  .panel-swap {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ===== 日程行入场（按行号给延迟，形成自上而下的轻微错落） ===== */
+@keyframes schedRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.row-in {
+  animation: schedRowIn calc(200ms * var(--motion-factor, 1)) var(--ease-out) both;
+}
+
 
 /* ===== 日历日格 hover / 过渡（颜色取自主题变量，不新增配色） ===== */
 .cal-cell {
@@ -300,4 +371,39 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .cal-cell:active {
   transform: translateY(0) scale(0.96);
 }
+
+/* ===== REDUCED MOTION（必须放在文件最后） =====
+   无障碍口径：去掉"位移/缩放"这类会引起前庭不适的运动，保留帮助理解状态变化的
+   透明度过渡。放在末尾是为了稳压前面所有同特异度的规则（CSS 里后者胜）。 */
+@media (prefers-reduced-motion: reduce) {
+  .alert-layer,
+  .alert-layer-leaving,
+  .island-page,
+  .ui-popover,
+  .overlay-pop,
+  .panel-swap,
+  .row-in {
+    transform: none;
+  }
+  .island-page,
+  .island-page-active,
+  .island-page-inactive {
+    transition: opacity 120ms linear;
+  }
+  .ui-popover,
+  .overlay-pop,
+  .panel-swap {
+    transition: opacity 120ms linear;
+  }
+  .row-in {
+    animation: none;
+  }
+  @starting-style {
+    .ui-popover,
+    .overlay-pop {
+      transform: none;
+    }
+  }
+}
+
 

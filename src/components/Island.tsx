@@ -1,22 +1,30 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useSettings } from "../stores/settings";
+import { useI18n } from "../i18n";
 import { type HorizontalPosition, type IslandState, THEME_PRESETS } from "../types";
 import SettingsPanel from "./SettingsPanel";
 import TimePage from "../pages/TimePage";
 import WeatherPage from "../pages/WeatherPage";
 import MusicPage from "../pages/MusicPage";
 import CalendarPage from "../pages/CalendarPage";
+import SchedulePage, { focusScheduleDate } from "../pages/SchedulePage";
 import NotificationPage from "../pages/NotificationPage";
 import NotificationAlert from "./NotificationAlert";
 import IslandTooltip from "./IslandTooltip";
 import { fetchNotifications } from "../services/notifications";
 import { isBlacklisted, type NotificationItem } from "../types/notification";
+import type { Occurrence } from "../types/schedule";
+import { startScheduleReminders } from "../services/reminderScheduler";
+import { sendNotification } from "../services/notify";
+import { playPromptSound, startAlarm, stopAlarm } from "../services/audio";
 import PageIndicator from "./PageIndicator";
 import AudioWaveLine from "./AudioWaveLine";
 import { useCoverAccent } from "../hooks/useCoverAccent";
-import { MOTION, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
+import { MOTION, PAGE_SHIFT, STATE_ORDER, easeOut, motionFactor, motionMs, prefersReducedMotion } from "../utils/motion";
+import { useMotionDirection } from "../hooks/useMotionDirection";
 import { useWeather } from "../hooks/useWeather";
 import { useMusic } from "../hooks/useMusic";
 import { useScrub, isPointerHeld } from "../hooks/useScrub";
@@ -31,14 +39,15 @@ import {
   MEDIUM_PAGES,
   EXPANDED_PAGES,
   MEDIUM_MUSIC_INDEX,
-  EXPANDED_MUSIC_INDEX,
   SETTINGS_PAGE_INDEX,
   isLastMediumPage,
   isLastExpandedPage,
   expandedPageOnReturn,
   mediumPageOnReturn,
+  indexOfPage,
 } from "../utils/pages";
 import { canScrollableAncestorScroll } from "../utils/scroll";
+import { formatClock, formatHm } from "../utils/format";
 
 // 页面路由全部集中在 utils/pages.ts（顺序、总数、跨态回落规则）
 // —— 这里不再写死 `currentPage === 2` 这类魔法数字，加页/调序才不会静默失效。
@@ -114,6 +123,7 @@ function showsMusic(music: MusicData | null | undefined): music is MusicData {
 export default function Island() {
   const { settings, state, setState, currentPage, setCurrentPage } =
     useSettings();
+  const { t } = useI18n();
   // 共享天气数据源 —— 一处 fetch, minimal/medium 两态共用
   const { data: weatherData } = useWeather();
   // 共享音乐数据源
@@ -201,10 +211,120 @@ export default function Island() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  /**
+   * 是否正因全屏而隐藏（Rust 侧判定 + 执行 hide，前端只订阅结论）。
+   *
+   * 用 ref 而不是 state：`showAlert` 被 1200ms 全局探测定时器依赖，一旦跟着
+   * 全屏状态重建，探测定时器就会重建、`seen` 基线反复清零（与 stateRef 同理）。
+   */
+  const fullscreenHiddenRef = useRef(false);
+
+  /**
+   * 全屏隐藏的**出场/入场阶段**（`"idle"` = 正常显示）。
+   *
+   * 为什么需要它：`window.hide()` 是一步到位的，窗口一消失就再也没有东西可以做动效。
+   * 所以协议改成两拍 —— Rust 判定到全屏时**先只发事件、不 hide**，
+   * 前端把「淡出 + 向上滑出」跑完再回 `commit_fullscreen_hide` 让它真正收起；
+   * 恢复方向相反：Rust 先 `show()`（此时前端仍停在收拢态，所以不会闪一下），
+   * 发事件 → 前端把窗口滑回来并淡入。
+   * Rust 侧另有一条截止兜底，前端没确认也会把岛藏掉（见 fullscreen.rs）。
+   */
+  const [fsPhase, setFsPhase] = useState<"idle" | "leaving" | "hidden" | "entering">("idle");
+
+  // 把开关同步给 Rust 检测线程。启动时也跑一次 —— 用户持久化过 `false` 的话，
+  // Rust 的静态默认值（true）必须被覆盖，否则关了的功能下次启动又生效。
+  useEffect(() => {
+    void invoke("set_fullscreen_hide", { enabled: settings.hideOnFullscreen }).catch(() => {
+      /* 命令不可用（旧构建）时保持 Rust 侧默认值即可，不必打扰用户 */
+    });
+  }, [settings.hideOnFullscreen]);
+
+  // 全局快捷键：启动时把持久化键位推给 Rust 注册，改键时重注册
+  // （注册是"先注销旧键再注册"，重复调用幂等）。键被占用不走 invoke 异常 ——
+  // Rust 发 hotkey://error 事件；快捷键设置页挂载时会重推一遍注册，
+  // 把错误拉到它的监听期间显示出来。
+  useEffect(() => {
+    void invoke("set_hotkeys", {
+      quit: settings.hotkeyQuit,
+      toggle: settings.hotkeyToggle,
+    }).catch(() => {
+      /* 命令不可用（旧构建）时没有全局快捷键，不影响其它功能 */
+    });
+  }, [settings.hotkeyQuit, settings.hotkeyToggle]);
+
+  // 订阅 Rust 的全屏结论。窗口隐藏期间 WebView 照常跑 JS，所以这里能实时收到。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listen<boolean>("fullscreen://changed", (e) => {
+      const gone = e.payload === true;
+      // 提醒抑制与动画无关、必须**立即**生效，所以先落到 ref 上
+      fullscreenHiddenRef.current = gone;
+      setFsPhase(gone ? "leaving" : "entering");
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* 事件系统不可用时退化为"全屏期间照常弹提醒"，不影响其它功能 */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  /**
+   * 全屏隐藏动效的时长（窗口滑动与内容淡出**共用同一个值**）。
+   *
+   * 必须与 animateWindow 的窗口形变同长同曲线 —— 这是本项目的老规矩：
+   * 窗口由 JS 逐帧插值、内容由 CSS 过渡，两侧不同步就会脱节
+   * （历史上「悬浮→展开时顶边漂移 13px」正是这么来的）。
+   * 减少动态效果时为 0：不插值、不过渡，一步落位。
+   */
+  const fsAnimMs = prefersReducedMotion() ? 0 : motionMs("expand", settings.animationSpeed);
+
+  // 是否处于"收拢"视觉（正在离开 / 已隐藏）：窗口整体移到屏幕上方 + 岛体淡出缩放。
+  // entering/idle 都不算 —— 恢复时窗口已经在屏幕上方，要靠 animateWindow 把它滑回来。
+  const fsCollapsed = fsPhase === "leaving" || fsPhase === "hidden";
+
+  // 淡入淡出与滑入滑出是**两条独立动画**（设置里可选），所以分开算：
+  //   fade  = 整棵岛体 opacity → 0（窗口不动）
+  //   slide = 窗口整体上滑出屏幕（完全不改透明度）
+  // 之所以不共用一个布尔：选纯 "slide" 时 opacity 必须停在 1，
+  // 选纯 "fade" 时窗口必须留在原位 —— 一个布尔表达不了"只滑不淡"这两档。
+  const fsFade = fsCollapsed && settings.fullscreenHideAnim !== "slide";
+  const fsSlide = fsCollapsed && settings.fullscreenHideAnim !== "fade";
+
+  // 出场：滑出 + 淡出跑完，才让 Rust 真正 hide（+60ms 是留给最后一帧的余量，
+  // 必须小于 fullscreen.rs 的 HIDE_DEADLINE_MS，否则兜底会抢在动画结束前 hide）。
+  useEffect(() => {
+    if (fsPhase !== "leaving") return;
+    const timer = window.setTimeout(() => {
+      void invoke("commit_fullscreen_hide").catch(() => {
+        /* 命令不可用（旧构建）时由 Rust 的截止兜底补上 */
+      });
+      setFsPhase("hidden");
+    }, fsAnimMs + 60);
+    return () => window.clearTimeout(timer);
+  }, [fsPhase, fsAnimMs]);
+
+  // 入场：滑回 + 淡入跑完回到 idle（之后这个 effect 不再介入）
+  useEffect(() => {
+    if (fsPhase !== "entering") return;
+    const timer = window.setTimeout(() => setFsPhase("idle"), fsAnimMs + 60);
+    return () => window.clearTimeout(timer);
+  }, [fsPhase, fsAnimMs]);
+
   const showAlert = useCallback(
     (item: NotificationItem) => {
       const s = stateRef.current;
       if (s === "expanded" || s === "maximal") return;
+      // 全屏中不打扰：岛此时已被 Rust 藏起来，弹提醒只会让窗口重新现形打断用户。
+      // 通知本身照常进列表（探测循环在更上层，这里只拦"弹"这一步）。
+      // 将来的闹钟是唯一例外，届时按 item 来源放行。
+      if (fullscreenHiddenRef.current) return;
       // 先把动画基准校准成"当前基础态尺寸"，避免从陈旧尺寸插值造成跳变。
       // 提醒可以在任意态弹出，所以基准要按当前态算。
       // 有音乐时悬浮态宽度**跟失焦态音乐窗口同宽**（用户要求）：两态尺寸一致，
@@ -232,6 +352,79 @@ export default function Island() {
     },
     [hasMusic, settings.minimalWidth, settings.mediumWidth]
   );
+
+  /**
+   * 日程提醒到点。
+   *
+   * 与通知提醒的两点差异（用户第三轮口径）：
+   * 1. **展开态也要弹** —— 通知提醒会 return（用户正在看岛时不再打扰），
+   *    但日程是用户自己设的，被"正好在展开态"吞掉就是 bug；
+   * 2. `alarmEnabled` 为真时循环播放闹钟音（`public/sounds/` 下的真实音频，最长 30s，失焦/点岛即停）；
+   *    否则只播一声通知音。
+   *
+   * 全屏隐藏期间只发系统通知、不弹岛内层（与通知同口径；闹钟是唯一的将来例外）。
+   */
+  const showScheduleAlert = useCallback(
+    (occurrence: Occurrence) => {
+      const { event, start } = occurrence;
+      const time = event.allDay ? t("schedule.allDay") : formatHm(start);
+      const body = [time, event.location, event.notes].filter(Boolean).join(" · ");
+
+      void sendNotification({
+        title: event.title,
+        body,
+        tag: `schedule:${event.id}:${occurrence.occurrenceDate}`,
+        route: "calendar",
+      });
+      // 闹钟开启 → 循环闹铃；否则只播一声通知音（用户给了素材：prompt sound / clock sound）
+      if (event.alarmEnabled) startAlarm();
+      else playPromptSound();
+
+      if (fullscreenHiddenRef.current) return;
+
+      const item: NotificationItem = {
+        id: -Date.now(),
+        appId: "tauriisland.schedule",
+        appName: t("schedule.appTitle"),
+        title: event.title,
+        body,
+        createdAt: Math.floor(Date.now() / 1000),
+        kind: "toast",
+      };
+
+      if (stateRef.current === "expanded" || stateRef.current === "maximal") {
+        // 已在展开态：几何已经够大，只换提醒层内容，不重新校准尺寸
+        if (alertLeaveTimerRef.current !== null) {
+          window.clearTimeout(alertLeaveTimerRef.current);
+          alertLeaveTimerRef.current = null;
+        }
+        setAlertLeaving(false);
+        alertHoverRef.current = false;
+        setAlertHeight(null);
+        setAlertItem(item);
+        return;
+      }
+      showAlert(item);
+    },
+    [showAlert, t]
+  );
+
+  // 提醒调度：30s 一轮，页面不可见也照跑（岛在后台时提醒才有意义）。
+  // ⚠️ 依赖必须是空数组：`t` 每次渲染都是新函数，showScheduleAlert 的身份也就每次都变，
+  // 旧写法 `[showScheduleAlert]` 会让 effect 每秒重启一次；配合调度器的单例去重表才安全。
+  const scheduleAlertRef = useRef(showScheduleAlert);
+  scheduleAlertRef.current = showScheduleAlert;
+  useEffect(
+    () => startScheduleReminders({ onFire: (occurrence) => scheduleAlertRef.current(occurrence) }),
+    []
+  );
+
+  // 窗口失焦（含 Alt+C 隐藏、点到别处）立即停铃：用户口径里的"点岛或 Alt+C 立即停"
+  useEffect(() => {
+    const onBlur = () => stopAlarm();
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, []);
 
   // 当前窗口实际尺寸（上一次动画结束后的值）
   const currentSizeRef = useRef({ w: 220, h: 48 });
@@ -269,7 +462,7 @@ export default function Island() {
 
   // 计算目标位置
   const getTargetPos = useCallback(
-    (w: number) => {
+    (w: number, h: number, fsHidden: boolean) => {
       const screenW = window.screen.width;
       // 悬浮：顶部留 8px。
       // 贴边挂角：**岛体**顶边必须与屏幕顶边齐平（用户反馈"最上的边与桌面有一定距离"）。
@@ -306,10 +499,20 @@ export default function Island() {
         default:
           x = (screenW - w) / 2;
       }
+      // 全屏收拢：把窗口整体挪到屏幕上方（h + 16 保证连水平微调一起也整块出去）。
+      // 窗口在动画跑完前一直留着，到位后由 Rust 的 commit_fullscreen_hide 真正 hide。
+      //
+      // 行程刻意只取"刚好出屏"，**不是**整屏高度：位移用的是 easeOut，前 40% 时间就走完
+      // 大半距离，行程越远"滑出去"越快、淡出越看不见（1080px 的行程下 100ms 就出屏了，
+      // 淡出等于不存在）。行程压到一屏窗口高之后，滑动与淡出才都看得见。
+      // 真正保证"看不见"的是 opacity → 0，位置只是配合它，所以行程取小是安全的。
+      if (fsHidden) {
+        return { x: x + settings.offsetX, y: -(h + 16) };
+      }
       // 水平微调：两种形态都生效（"贴边"只管顶边，不限制水平）
       return { x: x + settings.offsetX, y };
     },
-    [settings.style, settings.horizontalPosition, settings.offsetX, settings.offsetY, state, alertActive]
+    [settings.style, settings.horizontalPosition, settings.offsetX, settings.offsetY, state, alertActive, fsSlide]
   );
 
   // ====== 关键：带平滑动画的 OS 窗口尺寸/位置过渡 ======
@@ -335,7 +538,7 @@ export default function Island() {
         animFrameRef.current = null;
       }
 
-      const targetPos = getTargetPos(targetW);
+      const targetPos = getTargetPos(targetW, targetH, fsSlide);
       const startW = currentSizeRef.current.w;
       const startH = currentSizeRef.current.h;
       const startPos = currentPosRef.current;
@@ -418,7 +621,9 @@ export default function Island() {
 
       animFrameRef.current = requestAnimationFrame(tick);
     },
-    [getTargetPos, settings.animationSpeed]
+    // fsCollapsed 必须在依赖里：它一变 targetPos.y 就整体改变，
+    // 而"让窗口重新形变"的唯一入口就是这里 identity 变化 → 下面的 effect 重跑。
+    [getTargetPos, settings.animationSpeed, fsSlide]
   );
 
   // 每次 state / size 变化，触发带缓动的 OS 窗口过渡
@@ -670,7 +875,11 @@ export default function Island() {
         );
         batch.forEach((it) => seen.add(it.id));
         // 一次来多条时只提醒最新那条，避免连环弹窗
-        if (fresh.length > 0) showAlert(fresh[0]);
+        if (fresh.length > 0) {
+          // 通知音效（设置里可选/可自定义）：与日程提醒同一个音源选择
+          playPromptSound();
+          showAlert(fresh[0]);
+        }
       } catch {
         /* 探测失败静默忽略，等下一轮 */
       }
@@ -712,6 +921,8 @@ export default function Island() {
       setAlertLeaving(false);
       // 清掉上一条的实测高度：否则下一条提醒会先按旧高度弹、再跳一下
       setAlertItem(null);
+      // 日程闹钟跟着提醒一起停（响铃独立于提醒层，正常路径由 30s 上限兜底）
+      stopAlarm();
     }, motionMs("alertOut", settings.animationSpeed));
     if (stillHovering) {
       clearTimers();
@@ -834,13 +1045,20 @@ export default function Island() {
         }
   ) as React.CSSProperties;
 
+  // portal 到 document.body 的浮层（Dropdown 下拉、Hint 悬浮提示）不在岛体子树里，
+  // 拿不到上面这批行内变量，会回落到 index.css 里 `:root` 的**深色默认值** ——
+  // 浅色主题下就是"白底界面里冒出一块黑底浮层"。把同一批变量镜像到 <html> 即可。
+  // 依赖只写 settings.theme：cssVars 每次渲染都是新对象，写进去会每次重刷一遍。
+  useEffect(() => {
+    const root = document.documentElement;
+    for (const [key, value] of Object.entries(cssVars)) {
+      if (typeof value === "string") root.style.setProperty(key, value);
+    }
+  }, [settings.theme]);
+
   // 关键思路：Windows WebView2 transparent 窗口边缘天然是黑的，
   // 与其硬遮不如让它成为设计的一部分 —— 做一圈很细的深色阴影环
   // 把内外层间隙缩到 2px (看起来像阴影，不像破框)
-  const PAD = 2;
-  const dockedPad = { top: 0, left: PAD, right: PAD, bottom: PAD };
-  const floatingPad = { top: PAD, left: PAD, right: PAD, bottom: PAD };
-  const pad = floating ? floatingPad : dockedPad;
 
   // 把 preset 的 "rgb(r,g,b)" 和 用户 alpha 组合成 rgba()
   const applyAlpha = (rgb: string, alpha: number) => {
@@ -888,6 +1106,9 @@ export default function Island() {
    */
   const layerVisible = (s: IslandState) => !alertActive && state === s;
 
+  /** 这次形态变化是"长大"还是"收小"，供内容层做顺势的微位移 */
+  const stateDir = useMotionDirection(STATE_ORDER[state] ?? 1);
+
   /**
    * 内容层过渡（四态共用）。
    *
@@ -898,12 +1119,24 @@ export default function Island() {
    * 这样"岛变大"先发生、"内容出现"后跟上：既避免历史那种新旧内容同时半透明地叠在
    * 一起（双重曝光），也避免文字先跳出来再被窗口拉长。
    */
-  const layerMotion = (visible: boolean): React.CSSProperties => ({
-    opacity: visible ? 1 : 0,
-    pointerEvents: visible ? "auto" : "none",
-    transition: `opacity ${motionMs(visible ? "layerIn" : "layerOut", settings.animationSpeed)}ms var(--ease-out)`,
-    transitionDelay: visible ? `${motionMs("layerInDelay", settings.animationSpeed)}ms` : "0ms",
-  });
+  const layerMotion = (visible: boolean): React.CSSProperties => {
+    const ms = motionMs(visible ? "layerIn" : "layerOut", settings.animationSpeed);
+    return {
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? "auto" : "none",
+      // 位移跟着"这次是长大还是收小"：长大时新内容从上方 4px 落位，收小时反向。
+      // 幅度刻意压到 4px —— 窗口本身在形变，内容再大动就是双重运动（晕）。
+      // 可见时必须是 `none` 而不是 translateY(0)：任何非 none 的 transform 都会让这一层
+      // 变成 containing block，进而改变后代的 backdrop-filter（毛玻璃）取样根。
+      transform: visible ? "none" : `translateY(${-stateDir * 4}px)`,
+      transition: [
+        `opacity ${ms}ms var(--ease-out)`,
+        // 位移用屏幕内位移曲线，比透明度稍微慢一点点收尾，看起来更"稳"
+        `transform ${Math.round(ms * 1.15)}ms var(--ease-in-out)`,
+      ].join(", "),
+      transitionDelay: visible ? `${motionMs("layerInDelay", settings.animationSpeed)}ms` : "0ms",
+    };
+  };
   const isDark = settings.theme === "dark";
 
   // 外层：填满 OS 窗口（展开态四周留出 SHADOW_PAD）
@@ -916,6 +1149,8 @@ export default function Island() {
   // 减少动态效果时必须**一起**变 0：animateWindow 那边是直接落位的，
   // 这边若还在过渡 280ms，窗口已经到位而岛体还在慢慢长，两者会脱节。
   const geoMs = prefersReducedMotion() ? 0 : motionMs("expand", settings.animationSpeed);
+  // 圆角随窗口高度变化（胶囊→大圆角），外层与内层共用同一个值
+  const radius = getBorderRadius(size.h);
 
   const outerStyle: React.CSSProperties = {
     position: "absolute",
@@ -923,18 +1158,29 @@ export default function Island() {
     // ⚠️ 这一层与 innerStyle 的 top 一起构成「窗口顶边 → 岛体顶边」的距离；
     //    改这里必须同步 getTargetPos 里的 expandTopInset 补偿，否则顶边会漂。
     inset: isExpandedLayout ? SHADOW_PAD : 0,
-    borderRadius: getBorderRadius(size.h),
+    borderRadius: radius,
     overflow: isExpandedLayout ? "visible" : "hidden",
     background: "transparent",
-    cursor: "pointer",
+    // 全屏收拢：整棵岛体淡出。放在 outer 而不是 inner —— outer 是岛在窗口内的唯一
+    // 视觉根，它一淡就是"整块东西消失"，圆角/描边/阴影/光晕不会单独残留在屏幕上。
+    //
+    // 刻意**不用** transform 做"缩小"：inner 上挂着 backdrop-filter（毛玻璃），
+    // 而给祖先加 transform 会改变 backdrop 的取样根，有把玻璃效果弄坏的风险；
+    // 而这段动效本身已经有"整窗上滑"提供位移，再加缩放收益很小、风险不小。
+    opacity: fsFade ? 0 : 1,
+    // 收拢期间别留下"透明但能点"的假命中区
+    cursor: fsCollapsed ? "default" : "pointer",
     // overflow 保持 0ms：裁剪态必须**立刻**切（延迟会让越界内容露出来）。
     // top/right/bottom/left 与窗口形变同时长同曲线，岛体才会连续长大而不是"跳一下"。
+    // opacity 同理：与窗口上滑**同一个时长、同一条曲线**，
+    // 否则会看到"先淡完再往上走"或"还没滑出去就已经看不见了"这种两段式。
     transition: [
       `border-radius ${geoMs}ms var(--ease-out)`,
       `top ${geoMs}ms var(--ease-out)`,
       `right ${geoMs}ms var(--ease-out)`,
       `bottom ${geoMs}ms var(--ease-out)`,
       `left ${geoMs}ms var(--ease-out)`,
+      `opacity ${fsAnimMs}ms var(--ease-out)`,
       "overflow 0ms",
     ].join(", "),
   };
@@ -952,7 +1198,7 @@ export default function Island() {
     left: innerPad,
     right: innerPad,
     bottom: innerPad,
-    borderRadius: getBorderRadius(size.h),
+    borderRadius: radius,
     backgroundColor: bgWithAlpha,
     backdropFilter: "blur(20px)",
     WebkitBackdropFilter: "blur(20px)",
@@ -1085,6 +1331,12 @@ export default function Island() {
             musicData={musicData}
             lyrics={lyrics}
             onSelectPage={setExpandedPage}
+            onOpenScheduleDate={(date) => {
+              // 记一下来路：从设置页上滚回去时仍回到日程页，而不是音乐页
+              lastExpandedPageRef.current = indexOfPage(EXPANDED_PAGES, "schedule");
+              focusScheduleDate(date);
+              setExpandedPage(indexOfPage(EXPANDED_PAGES, "schedule"));
+            }}
           />
         </div>
         <div
@@ -1132,6 +1384,7 @@ function MinimalContent({
   musicData: MusicData | null;
   lyrics: LyricLine[];
 }) {
+  const { t } = useI18n();
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -1139,9 +1392,7 @@ function MinimalContent({
     return () => clearInterval(t);
   }, []);
 
-  const hh = time.getHours().toString().padStart(2, "0");
-  const mm = time.getMinutes().toString().padStart(2, "0");
-  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const clockHm = formatHm(time);
 
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
@@ -1157,7 +1408,7 @@ function MinimalContent({
   if (hasMusic) {
     const miniLyric = getCurrentLyric(lyrics, (musicData.position || 0) * 1000);
     return (
-      <div className="w-full h-full relative flex items-center gap-2.5 px-4" style={{ color }}>
+      <div className="panel-swap w-full h-full relative flex items-center gap-2.5 px-4" style={{ color }}>
         {/* 背景丝线：与展开态同一套「音频可视化」语言（用户要求失焦态也加）。
             绝对铺满 + pointerEvents:none；下面三块内容各自 relative + zIndex:1 压在上面
             —— 带 z-index 的定位元素会盖住静态内容，所以那三个 zIndex 不能省。
@@ -1211,7 +1462,7 @@ function MinimalContent({
             没有歌词时第二行退化成播放状态，保证两行骨架不变。 */}
         <div className="relative flex flex-col flex-1 min-w-0 leading-tight gap-[1px]" style={{ zIndex: 1 }}>
           <div className="flex items-baseline gap-[6px] min-w-0">
-            <span className="text-[11px] font-medium truncate">{musicData.title || "未知曲目"}</span>
+            <span className="text-[11px] font-medium truncate">{musicData.title || t("music.unknownTitle")}</span>
             {musicData.artist && (
               <span
                 className="text-[9px] truncate shrink-0 max-w-[45%]"
@@ -1222,7 +1473,7 @@ function MinimalContent({
             )}
           </div>
           <span className="text-[9.5px] truncate" style={{ color: muted, opacity: 0.95 }}>
-            {miniLyric?.text ?? (musicData.playing ? "♪ 正在播放" : "⏸ 已暂停")}
+            {miniLyric?.text ?? (musicData.playing ? t("music.playing") : t("music.paused"))}
           </span>
         </div>
 
@@ -1231,7 +1482,7 @@ function MinimalContent({
           className="relative text-[11px] font-medium tabular-nums shrink-0"
           style={{ color: muted, zIndex: 1 }}
         >
-          {hh}:{mm}
+          {clockHm}
         </span>
       </div>
     );
@@ -1239,12 +1490,12 @@ function MinimalContent({
 
   // —— 无音乐：时间+星期 | 天气简述 ——
   return (
-    <div className="w-full h-full flex items-center justify-center gap-2 px-4 text-[12px] leading-none" style={{ color }}>
+    <div className="panel-swap w-full h-full flex items-center justify-center gap-2 px-4 text-[12px] leading-none" style={{ color }}>
       <div className="flex items-center gap-1.5 shrink-0">
         <span className="font-medium tabular-nums">
-          {hh}:{mm}
+          {clockHm}
         </span>
-        <span className="opacity-60">{weekdays[time.getDay()]}</span>
+        <span className="opacity-60">{t(`time.weekdayShort.${time.getDay()}`)}</span>
       </div>
       <div style={{ width: 12, flexShrink: 0 }} />
       {weatherData ? (
@@ -1286,47 +1537,41 @@ function MediumContent({
   musicData: MusicData | null;
   lyrics: import("../types/lyrics").LyricLine[];
 }) {
+  // 页的静止位移按**位置关系**给：索引靠前的页停在上方，靠后的停在下方（见 PAGE_SHIFT）。
+  // 这样向前/向后翻都是"顺着页序滑"，不需要记住上次翻向（记翻向会在无关重渲染时清成 0，
+  // 旧页会反向弹一下）。
+  const nodes: React.ReactNode[] = [
+    <TimePage key="time" />,
+    <WeatherPage key="weather" data={weatherData} />,
+    <MusicPage key="music" data={musicData} lyrics={lyrics} />,
+  ];
+
   return (
     <div className="w-full h-full relative">
-      {/* 时间页 */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: page === 0 ? 1 : 0,
-          pointerEvents: page === 0 ? "auto" : "none",
-          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
-          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
-        }}
-      >
-        <TimePage />
-      </div>
-      {/* 天气页 */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: page === 1 ? 1 : 0,
-          pointerEvents: page === 1 ? "auto" : "none",
-          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
-          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
-        }}
-      >
-        <WeatherPage data={weatherData} />
-      </div>
-      {/* 音乐页 */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: page === 2 ? 1 : 0,
-          pointerEvents: page === 2 ? "auto" : "none",
-          // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
-          transition: `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
-        }}
-      >
-        <MusicPage data={musicData} lyrics={lyrics} />
-      </div>
+      {nodes.map((node, i) => {
+        const active = page === i;
+        return (
+          <div
+            key={i}
+            aria-hidden={!active}
+            style={{
+              position: "absolute",
+              inset: 0,
+              opacity: active ? 1 : 0,
+              pointerEvents: active ? "auto" : "none",
+              // 可见页用 `none`（非 none 的 transform 会改变后代 backdrop-filter 的取样根）
+              transform: active ? "none" : `translateY(${Math.sign(i - page) * PAGE_SHIFT}px)`,
+              // 页内换页在 MediumContent 里、拿不到 settings，所以走继承下来的 CSS 倍率
+              transition: [
+                `opacity calc(${MOTION.page}ms * var(--motion-factor, 1)) var(--ease-out)`,
+                `transform calc(${MOTION.page * 1.25}ms * var(--motion-factor, 1)) var(--ease-in-out)`,
+              ].join(", "),
+            }}
+          >
+            {node}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1336,25 +1581,29 @@ function MediumContent({
 // 按 99px 像素绘制而非铺满画布；island-belt-static 动画又让它呼吸闪动。
 // 用户明确要求展开态看起来像窗口阴影（与其它状态一致），故不再渲染，组件一并删除。
 
-// ===== expanded 态内容（音乐 / 日历 / 通知 三页 + 底部页码指示器） =====
+// ===== expanded 态内容（音乐 / 日历 / 日程 / 通知 四页 + 底部页码指示器） =====
 function ExpandedContent({
   page,
   visible,
   musicData,
   lyrics,
   onSelectPage,
+  onOpenScheduleDate,
 }: {
   page: number;
-  /** 展开态是否可见 —— 三页同时 mounted，通知页靠它 gate 住轮询（否则一直读盘） */
+  /** 展开态是否可见 —— 四页同时 mounted，通知页/日程页靠它 gate 住轮询（否则一直读盘） */
   visible: boolean;
   musicData: MusicData | null;
   lyrics: LyricLine[];
   onSelectPage: (index: number) => void;
+  /** 日历页双击格子 → 跳到日程页并定位那一天 */
+  onOpenScheduleDate: (date: Date) => void;
 }) {
-  // 三页同时 mounted，用 class 做透明度 + 轻微位移过渡（与 medium 态同机制）
+  // 四页同时 mounted，用 class 做透明度 + 轻微位移过渡（与 medium 态同机制）
   const pages: { key: string; node: React.ReactNode }[] = [
     { key: "music", node: <MusicDetailView data={musicData} lyrics={lyrics} /> },
-    { key: "calendar", node: <CalendarPage visible={visible} /> },
+    { key: "calendar", node: <CalendarPage visible={visible} onOpenSchedule={onOpenScheduleDate} /> },
+    { key: "schedule", node: <SchedulePage visible={visible} /> },
     { key: "notification", node: <NotificationPage visible={visible} /> },
   ];
   const safePage = Math.min(Math.max(page, 0), pages.length - 1);
@@ -1366,6 +1615,14 @@ function ExpandedContent({
           key={p.key}
           className={`island-page ${i === safePage ? "island-page-active" : "island-page-inactive"}`}
           aria-hidden={i !== safePage}
+          // 静止位移按页序给方向（见 PAGE_SHIFT）：向前翻旧页往上走、新页从下方进来，
+          // 向后翻完全对称。透明度和时长仍由 .island-page-* 管。
+          style={{
+            // 当前页用 `none`：非 none 的 transform 会让这一页成为 containing block，
+            // 改变后代 backdrop-filter（日程编辑器/弹窗的毛玻璃）的取样根。
+            transform:
+              i === safePage ? "none" : `translateY(${Math.sign(i - safePage) * PAGE_SHIFT}px)`,
+          }}
         >
           {p.node}
         </div>
@@ -1397,6 +1654,7 @@ function MusicDetailView({
   data: MusicData | null;
   lyrics: import("../types/lyrics").LyricLine[];
 }) {
+  const { t } = useI18n();
   const color = "var(--island-text)";
   const muted = "var(--island-text-muted)";
 
@@ -1424,20 +1682,11 @@ function MusicDetailView({
           <circle cx="18" cy="16" r="3" stroke="currentColor" strokeWidth="1.5"/>
         </svg>
         <span className="text-[12px]" style={{ color: muted }}>
-          {data?.diag ? `⚠ ${data.diag}` : "暂无活跃音乐"}
+          {data?.diag ? `⚠ ${data.diag}` : t("music.noActive")}
         </span>
       </div>
     );
   }
-
-  const formatTime = (s: number) => {
-    if (!s || isNaN(s)) return "0:00";
-    // 与播放器一致：对秒数截断（floor）
-    const total = Math.floor(s);
-    const m = Math.floor(total / 60);
-    const sec = (total % 60).toString().padStart(2, "0");
-    return `${m}:${sec}`;
-  };
 
   // timeline 为 0 时用模拟进度；duration 也为 0 时不显示百分比
   const hasRealDuration = data.duration > 0;
@@ -1571,7 +1820,7 @@ function MusicDetailView({
           >
             <button
               onClick={handlePrev}
-              aria-label="上一首"
+              aria-label={t("music.prev")}
               className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
               style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
             >
@@ -1579,7 +1828,7 @@ function MusicDetailView({
             </button>
             <button
               onClick={handlePlayPause}
-              aria-label={data.playing ? "暂停" : "播放"}
+              aria-label={data.playing ? t("music.pause") : t("music.play")}
               className="flex items-center justify-center rounded-full shrink-0 hover:scale-105 active:scale-95 transition-all cursor-pointer"
               style={{
                 width: 38, height: 38,
@@ -1597,7 +1846,7 @@ function MusicDetailView({
             </button>
             <button
               onClick={handleNext}
-              aria-label="下一首"
+              aria-label={t("music.next")}
               className="flex items-center justify-center p-1.5 hover:opacity-100 hover:scale-110 active:scale-95 transition-all cursor-pointer"
               style={{ background: "none", border: "none", color: "var(--island-text)", opacity: 0.85 }}
             >
@@ -1611,13 +1860,13 @@ function MusicDetailView({
           {/* 顶部横排：歌名是焦点（大、半粗），歌手·专辑紧随其后并限宽，长名自动省略 */}
           <div className="flex items-baseline gap-[10px] min-w-0" style={{ zIndex: 1 }}>
             <div className="text-[19px] font-semibold leading-tight truncate min-w-0">
-              {data.title || "未知曲目"}
+              {data.title || t("music.unknownTitle")}
             </div>
             <div
               className="text-[11.5px] leading-tight truncate shrink-0"
               style={{ color: muted, maxWidth: "46%" }}
             >
-              {data.artist || "未知艺术家"}
+              {data.artist || t("music.unknownArtist")}
               {data.album ? ` · ${data.album}` : ""}
             </div>
           </div>
@@ -1631,7 +1880,7 @@ function MusicDetailView({
             <div
               ref={scrub.barRef}
               className={seekable ? "cursor-pointer" : undefined}
-              data-tip={seekable ? "点击或拖动可跳转" : undefined}
+              data-tip={seekable ? t("music.seekTip") : undefined}
               style={{ padding: "6px 0", margin: "-6px 0", touchAction: "none" }}
               {...scrub.handlers}
             >
@@ -1670,8 +1919,8 @@ function MusicDetailView({
               className="flex justify-between mt-[5px]"
               style={{ fontSize: 10.5, color: muted, fontVariantNumeric: "tabular-nums" }}
             >
-              <span>{formatTime(posSec)}</span>
-              <span>{hasRealDuration ? formatTime(data.duration) : "—:—"}</span>
+              <span>{formatClock(posSec)}</span>
+              <span>{hasRealDuration ? formatClock(data.duration) : "—:—"}</span>
             </div>
           </div>
         </div>
@@ -1691,6 +1940,7 @@ function LyricsBlock({
   positionMs: number;
   playing: boolean;
 }) {
+  const { t } = useI18n();
   // 找当前歌词行索引
   const currentIdx = lyrics.length > 0
     ? lyrics.reduce<number | null>(
@@ -1706,7 +1956,7 @@ function LyricsBlock({
         className="flex-1 min-h-0 mt-[10px] flex items-center text-[11px]"
         style={{ color: "var(--island-text-muted)" }}
       >
-        {playing ? "♪ 正在播放 · 等待歌词…" : "⏸ 已暂停 · 等待歌词…"}
+        {playing ? t("music.waitingLyricPlaying") : t("music.waitingLyricPaused")}
       </div>
     );
   }

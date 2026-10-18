@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n";
+
 interface PageIndicatorProps {
   /** 总页数 */
   count: number;
@@ -21,6 +23,7 @@ export default function PageIndicator({
   orientation = "horizontal",
   onSelect,
 }: PageIndicatorProps) {
+  const { t } = useI18n();
   const vertical = orientation === "vertical";
   const safeActive = Math.min(Math.max(activeIndex, 0), Math.max(count - 1, 0));
 
@@ -42,9 +45,9 @@ export default function PageIndicator({
           <button
             key={i}
             type="button"
-            aria-label={`第 ${i + 1} 页`}
+            aria-label={t("notification.pageIndicator", { page: i + 1 })}
             aria-current={active ? "page" : undefined}
-            data-tip={`第 ${i + 1} 页`}
+            data-tip={t("notification.pageIndicator", { page: i + 1 })}
             data-tip-pos={vertical ? "bottom" : "top"}
             onClick={(e) => {
               e.stopPropagation();

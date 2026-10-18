@@ -1,42 +1,26 @@
 import { useSettings } from "../../stores/settings";
+import { useI18n } from "../../i18n";
 import { ANIMATION_DURATION, type AnimationSpeed } from "../../types";
+import Toggle from "./Toggle";
 
-const SPEEDS: { key: AnimationSpeed; label: string }[] = [
-  { key: "slow", label: "慢" },
-  { key: "normal", label: "正常" },
-  { key: "fast", label: "快" },
+const SPEEDS: { key: AnimationSpeed; labelKey: string }[] = [
+  { key: "slow", labelKey: "settings.interaction.speedSlow" },
+  { key: "normal", labelKey: "settings.interaction.speedNormal" },
+  { key: "fast", labelKey: "settings.interaction.speedFast" },
 ];
 
-function Toggle({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-[11px] opacity-80">{label}</span>
-      <div
-        className={`switch${value ? " active" : ""}`}
-        onClick={() => onChange(!value)}
-      />
-    </div>
-  );
-}
 
 export default function InteractionSettings() {
   const { settings, updateSettings } = useSettings();
+  const { t } = useI18n();
 
   return (
     <div className="space-y-5">
-      <h3 className="text-[13px] font-semibold opacity-90">交互</h3>
+      <h3 className="text-[13px] font-semibold opacity-90">{t("settings.interaction.title")}</h3>
 
       <div>
         <div className="flex justify-between text-[11px] mb-1.5">
-          <span className="opacity-60">悬停展开延迟</span>
+          <span className="opacity-60">{t("settings.interaction.hoverDelay")}</span>
           <span className="tabular-nums">{settings.hoverDelay}ms</span>
         </div>
         <input
@@ -53,7 +37,7 @@ export default function InteractionSettings() {
 
       <div>
         <div className="flex justify-between text-[11px] mb-1.5">
-          <span className="opacity-60">失焦收起延迟</span>
+          <span className="opacity-60">{t("settings.interaction.collapseDelay")}</span>
           <span className="tabular-nums">{settings.collapseDelay}ms</span>
         </div>
         <input
@@ -70,7 +54,7 @@ export default function InteractionSettings() {
 
       <div>
         <div className="flex justify-between text-[11px] mb-2">
-          <span className="opacity-60">动画速度</span>
+          <span className="opacity-60">{t("settings.interaction.animationSpeed")}</span>
           {/* 三挡的基准时长直接来自 ANIMATION_DURATION，和动效实际取时长是同一个源 */}
           <span className="tabular-nums">
             {ANIMATION_DURATION[settings.animationSpeed]}ms
@@ -92,19 +76,21 @@ export default function InteractionSettings() {
                 color: "var(--island-text)",
               }}
             >
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>
       </div>
 
       <Toggle
-        label="滚轮翻页"
+        dense
+        label={t("settings.interaction.wheel")}
         value={settings.wheelEnabled}
         onChange={(v) => updateSettings({ wheelEnabled: v })}
       />
       <Toggle
-        label="最小态点击穿透"
+        dense
+        label={t("settings.interaction.clickThrough")}
         value={settings.clickThroughMinimal}
         onChange={(v) => updateSettings({ clickThroughMinimal: v })}
       />

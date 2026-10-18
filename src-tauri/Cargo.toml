@@ -1,6 +1,6 @@
 [package]
 name = "tauriisland"
-version = "26.10.11-1"
+version = "26.10.1205"
 description = "A Dynamic Island for Windows"
 authors = ["you"]
 edition = "2021"
@@ -44,7 +44,13 @@ windows = { version = "0.58", features = [
   "Storage_Streams",
   "Win32_Foundation",
   "Win32_System_Com",
+  # 全屏隐藏：SHQueryUserNotificationState 在 Win32::UI::Shell 下，
+  # 没有这个 feature 会报 "could not find Shell in UI"（同 Foundation_Collections 那类门控）。
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
+  # 全局快捷键：RegisterHotKey/UnregisterHotKey/MOD_* 在 Win32::UI::Input::KeyboardAndMouse 下
+  # （不是 WindowsAndMessaging），缺这个 feature 会报 unresolved import。
+  "Win32_UI_Input_KeyboardAndMouse",
   "implement",
 ] }
 

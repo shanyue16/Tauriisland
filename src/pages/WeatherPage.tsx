@@ -1,4 +1,5 @@
 import { getWeatherIcon, weatherTextToIconCode } from "../components/Icons";
+import { useI18n } from "../i18n";
 import type { WeatherData } from "../types/weather";
 
 interface WeatherPageProps {
@@ -6,6 +7,7 @@ interface WeatherPageProps {
 }
 
 export default function WeatherPage({ data }: WeatherPageProps) {
+  const { t } = useI18n();
   const color = "var(--island-text)";
 
   if (!data) {
@@ -14,7 +16,7 @@ export default function WeatherPage({ data }: WeatherPageProps) {
         className="w-full h-full flex items-center justify-center py-1 px-[18px] pr-[26px]"
         style={{ color }}
       >
-        <div className="text-[11px] opacity-60">加载中...</div>
+        <div className="text-[11px] opacity-60">{t("weather.loading")}</div>
       </div>
     );
   }
@@ -35,7 +37,7 @@ export default function WeatherPage({ data }: WeatherPageProps) {
     >
       {/* 今日列 */}
       <DayColumn
-        label="今日"
+        label={t("weather.today")}
         iconCode={data.weather_icon}
         desc={data.weather}
         tempNow={Math.round(data.temperature)}
@@ -56,7 +58,7 @@ export default function WeatherPage({ data }: WeatherPageProps) {
       {/* 明日列 */}
       {tomorrow ? (
         <DayColumn
-          label="明日"
+          label={t("weather.tomorrow")}
           iconCode={weatherTextToIconCode(tomorrow.weather_day || "")}
           desc={tomorrow.weather_day}
           tempNow={tomorrow.temp_max}

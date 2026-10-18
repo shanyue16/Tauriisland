@@ -113,13 +113,15 @@ function runProvider(
 export async function fetchLyricsMulti(query: LyricsQuery): Promise<LyricsResult | null> {
   const { title, artist, appName, kugouTrack, durationMs } = query;
   if (!title && !artist) return null;
+  // 日志里的曲目标签统一拼一次，多处命中/未命中日志共用
+  const trackLabel = `${title} / ${artist}`;
 
   // ⓪ 本地源（Folia 本机歌词接口）—— 放在整条级联之前。
   // 它自己负责：曲目核对（对不上整份丢弃）、真超时、一切失败静默返回 null，
   // 所以这里不需要再包一层 withTimeout（那是假的超时，不会中止请求）。
   const local = await fetchLyricsFromFolia({ title, artist, durationMs });
   if (local && local.lines.length > 0) {
-    console.info(`${LOG} 命中 folia(本地): "${title} / ${artist}"（${local.lines.length} 行）`);
+    console.info(`${LOG} 命中 folia(本地): "${trackLabel}"（${local.lines.length} 行）`);
     return { lines: local.lines, duration: saneDuration(local.duration), provider: "folia" };
   }
 
@@ -133,7 +135,7 @@ export async function fetchLyricsMulti(query: LyricsQuery): Promise<LyricsResult
   // 与 Folia 同样：曲目核对不通过就整份返回 null，所以这里不需要再包一层 withTimeout。
   const np = await fetchLyricsFromNowPlaying({ title, artist, durationMs });
   if (np && np.lines.length > 0) {
-    console.info(`${LOG} 命中 nowplaying(本地): "${title} / ${artist}"（${np.lines.length} 行）`);
+    console.info(`${LOG} 命中 nowplaying(本地): "${trackLabel}"（${np.lines.length} 行）`);
     return { lines: np.lines, duration: saneDuration(np.duration), provider: "nowplaying" };
   }
 
@@ -143,20 +145,20 @@ export async function fetchLyricsMulti(query: LyricsQuery): Promise<LyricsResult
   for (const provider of order) {
     const hit = await withTimeout(runProvider(provider, title, artist, kugouTrack), null);
     if (hit && hit.lines.length > 0) {
-      console.info(`${LOG} 命中 ${provider}: "${title} / ${artist}"（${hit.lines.length} 行）`);
+      console.info(`${LOG} 命中 ${provider}: "${trackLabel}"（${hit.lines.length} 行）`);
       return { lines: hit.lines, duration: saneDuration(hit.duration), provider };
     }
-    console.warn(`${LOG} ${provider} 未命中: "${title} / ${artist}"`);
+    console.warn(`${LOG} ${provider} 未命中: "${trackLabel}"`);
   }
 
   // 最后一档：LRCLIB（eIsland 同样放在所有源之后）
   const lr = await withTimeout(lrclibProvider(title, artist), null);
   if (lr && lr.lines.length > 0) {
-    console.info(`${LOG} 命中 lrclib（兜底）: "${title} / ${artist}"（${lr.lines.length} 行）`);
+    console.info(`${LOG} 命中 lrclib（兜底）: "${trackLabel}"（${lr.lines.length} 行）`);
     return { lines: lr.lines, duration: saneDuration(lr.duration), provider: "lrclib" };
   }
 
-  console.warn(`${LOG} 全部源都未命中: "${title} / ${artist}"`);
+  console.warn(`${LOG} 全部源都未命中: "${trackLabel}"`);
   return null;
 }
 
